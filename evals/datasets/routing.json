@@ -1,0 +1,18 @@
+[
+  {"id": "rt01", "role": "staff", "question": "Chào bạn", "expect": ["none"]},
+  {"id": "rt02", "role": "staff", "question": "Cảm ơn nhé, vậy là đủ rồi", "expect": ["none"]},
+  {"id": "rt03", "role": "staff", "question": "Học phí khoá Power BI bao nhiêu?", "expect": ["ask_advisor"]},
+  {"id": "rt04", "role": "staff", "question": "Chính sách hoàn tiền khi học viên huỷ đăng ký thế nào?", "expect": ["ask_advisor"]},
+  {"id": "rt05", "role": "staff", "question": "Có lớp IELTS buổi tối nào sắp khai giảng không?", "expect": ["ask_advisor", "ask_analytics"]},
+  {"id": "rt06", "role": "staff", "question": "Doanh thu tháng này bao nhiêu?", "expect": ["ask_analytics"]},
+  {"id": "rt07", "role": "staff", "question": "Có bao nhiêu học viên đang nợ học phí?", "expect": ["ask_analytics"]},
+  {"id": "rt08", "role": "staff", "question": "Giảng viên nào đang dạy nhiều lớp nhất?", "expect": ["ask_analytics"]},
+  {"id": "rt09", "role": "staff", "question": "Cấp voucher giảm 10% cho học viên id 7 vì đi học đầy đủ", "expect": ["ask_action"]},
+  {"id": "rt10", "role": "staff", "question": "Gửi email cho học viên id 12 báo lớp tối thứ 6 tuần này nghỉ", "expect": ["ask_action", "ask_analytics"]},
+  {"id": "rt11", "role": "staff", "question": "Tìm 3 học viên nợ nhiều nhất rồi gửi email nhắc họ", "expect": ["ask_analytics"]},
+  {"id": "rt12", "role": "manager", "question": "Tỷ lệ huỷ đơn quý này so với quý trước?", "expect": ["ask_analytics"]},
+  {"id": "rt13", "role": "student", "question": "Mình đang đăng ký những lớp nào?", "expect": ["ask_advisor"]},
+  {"id": "rt14", "role": "student", "question": "Con mình học lớp 8, nên học khoá tiếng Anh nào?", "expect": ["ask_advisor", "remember_user_fact"]},
+  {"id": "rt15", "role": "student", "question": "Doanh thu của trung tâm tháng này là bao nhiêu?", "expect": ["none", "ask_advisor"]},
+  {"id": "rt16", "role": "student", "question": "Có cho trả góp học phí không?", "expect": ["ask_advisor"]}
+]

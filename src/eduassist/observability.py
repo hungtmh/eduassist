@@ -1,4 +1,9 @@
-"""Tracing với Langfuse - TUỲ CHỌN. Không cấu hình key thì trả về [] và hệ thống chạy bình thường."""
+"""Tracing với Langfuse - TUỲ CHỌN. Không cấu hình key thì trả về [] và hệ thống chạy bình thường.
+
+trace_id của Langfuse = run_id của lượt chat (bỏ dấu gạch) -> feedback 👍/👎 gắn đúng vào trace đó.
+Lưu ý quyền riêng tư: trace chứa nội dung hội thoại (có thể có email/SĐT học viên). Với dữ liệu thật,
+nên TỰ HOST Langfuse để dữ liệu không rời hạ tầng của trung tâm.
+"""
 
 import logging
 from functools import lru_cache
@@ -9,43 +14,49 @@ log = logging.getLogger("eduassist.observability")
 
 
 @lru_cache
-def _langfuse_ready() -> bool:
+def _client():
     s = get_settings()
     if not s.langfuse_enabled:
-        return False
+        return None
     try:
         from langfuse import Langfuse
 
-        Langfuse(
+        return Langfuse(
             public_key=s.langfuse_public_key,
             secret_key=s.langfuse_secret_key.get_secret_value(),
             host=s.langfuse_host,
         )
-        return True
     except Exception:  # thiếu package (group "obs") hoặc cấu hình sai -> tắt tracing, không làm sập app
         log.warning("Langfuse không khởi tạo được - tắt tracing", exc_info=True)
-        return False
+        return None
+
+
+def trace_id(run_id: str) -> str:
+    return run_id.replace("-", "")
 
 
 def tracing_callbacks(ctx) -> list:
-    if not _langfuse_ready():
+    if _client() is None:
         return []
     from langfuse.langchain import CallbackHandler
 
-    return [CallbackHandler()]
+    return [
+        CallbackHandler(public_key=get_settings().langfuse_public_key, trace_context={"trace_id": trace_id(ctx.run_id)})
+    ]
+
+
+def tracing_metadata(ctx) -> dict:
+    """Langfuse đọc các khoá này từ metadata của LangChain để lọc trace theo user / hội thoại / vai trò."""
+    return {"langfuse_user_id": ctx.user_id, "langfuse_session_id": ctx.thread_id, "langfuse_tags": [ctx.role]}
 
 
 def record_feedback(run_id: str, score: int, comment: str | None) -> None:
-    if not _langfuse_ready():
+    client = _client()
+    if client is None:
         return
     try:
-        from langfuse import get_client
-
-        get_client().create_score(name="user_feedback", value=score, trace_id=_trace_id(run_id), comment=comment)
+        client.create_score(
+            name="user_feedback", value=score, trace_id=trace_id(run_id), comment=comment, data_type="NUMERIC"
+        )
     except Exception:
         log.warning("Không gửi được feedback lên Langfuse", exc_info=True)
-
-
-def _trace_id(run_id: str) -> str:
-    # Langfuse trace id = 32 ký tự hex; run_id của ta là uuid4 -> bỏ dấu gạch
-    return run_id.replace("-", "")

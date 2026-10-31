@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.33"
+      - run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check src tests scripts ui && uv run ruff format --check src tests scripts ui
+      - name: Unit tests (không cần LLM / database)
+        run: uv run pytest -q
+
+  integration:
+    # Kiểm tra lớp an toàn ở chính Postgres: role agent_ro thật sự không ghi được, không đọc được app_user
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: eduassist
+          POSTGRES_USER: app_rw
+          POSTGRES_PASSWORD: app_rw_dev_pw
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app_rw -d eduassist" --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.33"
+      - run: uv sync --frozen
+      - run: cp .env.example .env
+      - name: Setup database (không tạo vector để chạy nhanh)
+        run: uv run eduassist-setup --skip-ingest
+      - name: Integration tests
+        run: uv run pytest -q -m integration

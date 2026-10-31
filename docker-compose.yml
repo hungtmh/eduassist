@@ -1,5 +1,13 @@
-# Chạy hạ tầng khi dev:   docker compose up -d db mailpit
-# Chạy toàn bộ hệ thống:   docker compose --profile app up -d --build
+# Dev (chạy code trên máy):  docker compose up -d db mailpit
+# Toàn bộ hệ thống:          docker compose --profile app up -d --build
+#   API  http://localhost:8000/docs   UI  http://localhost:8001   Mailpit  http://localhost:8025
+x-app-env: &app-env
+  DATABASE_URL: postgresql://app_rw:${POSTGRES_PASSWORD:-app_rw_dev_pw}@db:5432/eduassist
+  AGENT_RO_URL: postgresql://agent_ro:${AGENT_RO_PASSWORD:-agent_ro_dev_pw}@db:5432/eduassist
+  AGENT_RO_PASSWORD: ${AGENT_RO_PASSWORD:-agent_ro_dev_pw}
+  SMTP_HOST: mailpit
+  SMTP_PORT: "1025"
+
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -24,21 +32,33 @@ services:
       - "8025:8025"
       - "1025:1025"
 
+  setup:
+    # Chạy 1 lần: schema, role read-only, dữ liệu giả lập, vector. Idempotent.
+    profiles: ["app"]
+    build: .
+    command: ["eduassist-setup"]
+    env_file: .env
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+
   api:
     profiles: ["app"]
     build: .
     command: ["uvicorn", "eduassist.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     env_file: .env
-    environment:
-      DATABASE_URL: postgresql://app_rw:${POSTGRES_PASSWORD:-app_rw_dev_pw}@db:5432/eduassist
-      AGENT_RO_URL: postgresql://agent_ro:${AGENT_RO_PASSWORD:-agent_ro_dev_pw}@db:5432/eduassist
-      SMTP_HOST: mailpit
-      SMTP_PORT: "1025"
+    environment: *app-env
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     depends_on:
-      db:
-        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
 
   ui:
     profiles: ["app"]
@@ -50,7 +70,8 @@ services:
     ports:
       - "8001:8001"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:

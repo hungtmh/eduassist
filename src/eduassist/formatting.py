@@ -17,6 +17,15 @@ def vnd(n: int | float) -> str:
     return f"{vn_number(n)}đ"
 
 
+REFUSAL_MARKERS = ("chưa tìm thấy", "không tìm thấy", "không có thông tin", "chưa có thông tin")
+
+
+def is_refusal(answer: str) -> bool:
+    """Agent tư vấn trả lời "không tìm thấy trong tài liệu"? (prompt bắt nó dùng đúng câu này)."""
+    a = answer.lower()
+    return any(m in a for m in REFUSAL_MARKERS)
+
+
 def fold(text: str) -> str:
     """Bỏ dấu + chữ thường + chỉ giữ chữ/số: so khớp "03_bao_lưu_hoàn_tiền.md" với "03_bao_luu_hoan_tien.md"."""
     text = text.lower().replace("đ", "d")

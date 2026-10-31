@@ -22,7 +22,7 @@ from eduassist.agents.context import ROLE_LABEL, Role, UserContext, emit
 from eduassist.agents.persistence import get_checkpointer, get_store, memory_namespace
 from eduassist.config import get_settings
 from eduassist.db import app_pool
-from eduassist.formatting import fold
+from eduassist.formatting import fold, is_refusal
 from eduassist.llm import chat_model, resilience_middleware
 
 MAX_MEMORIES_IN_PROMPT = 10
@@ -108,6 +108,12 @@ def ask_advisor(question: str, runtime: ToolRuntime[UserContext]) -> str:
     sources = verified_sources(answer)
     if sources:
         emit("sources", items=sources)
+    if is_refusal(answer):  # lỗ hổng tài liệu -> báo cáo định kỳ cho nhân viên bổ sung
+        with app_pool().connection() as conn:
+            conn.execute(
+                "INSERT INTO knowledge_gap (question, user_id, role) VALUES (%s, %s, %s)",
+                (question, runtime.context.user_id, runtime.context.role),
+            )
     return answer
 
 
@@ -137,7 +143,11 @@ def remember_user_fact(fact: str, runtime: ToolRuntime[UserContext]) -> str:
 def supervisor_prompt(request: ModelRequest) -> str:
     ctx: UserContext = request.runtime.context
     items = get_store().search(memory_namespace(ctx.user_id), limit=MAX_MEMORIES_IN_PROMPT)
-    memories = "\n".join(f"- {it.value['fact']}" for it in items) or "(chưa có)"
+    return render_supervisor_prompt(ctx, [it.value["fact"] for it in items])
+
+
+def render_supervisor_prompt(ctx: UserContext, facts: list[str]) -> str:
+    memories = "\n".join(f"- {f}" for f in facts) or "(chưa có)"
     if ctx.is_staff:
         guide = "\n".join(TOOL_GUIDE[k] for k in ("ask_advisor", "ask_analytics", "ask_action"))
     else:

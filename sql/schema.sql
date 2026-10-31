@@ -130,6 +130,15 @@ CREATE TABLE IF NOT EXISTS feedback (
     UNIQUE (run_id, user_id)
 );
 
+-- Câu hỏi agent tư vấn KHÔNG tìm thấy trong tài liệu -> báo cáo để nhân viên bổ sung tài liệu
+CREATE TABLE IF NOT EXISTS knowledge_gap (
+    id          SERIAL PRIMARY KEY,
+    question    TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    role        TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- =====================================================================
 -- VECTOR (pgvector) - 384 chiều = paraphrase-multilingual-MiniLM-L12-v2
 -- =====================================================================

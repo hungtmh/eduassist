@@ -19,7 +19,9 @@ def chat_model(model: str | None = None, temperature: float = 0.0) -> BaseChatMo
         model=model or s.llm_model,
         temperature=temperature,
         api_key=s.groq_api_key,
-        max_retries=0,  # retry do ModelRetryMiddleware lo (có backoff, có log)
+        # SDK tự chờ theo header retry-after khi bị 429 (free tier Groq: 8K token/phút);
+        # lỗi khác do ModelRetryMiddleware + model dự phòng xử lý
+        max_retries=3,
         timeout=60,
     )
 

@@ -18,7 +18,7 @@ from langgraph.types import Command
 
 from eduassist.agents.context import UserContext
 from eduassist.agents.supervisor import build_supervisor
-from eduassist.observability import tracing_callbacks
+from eduassist.observability import tracing_callbacks, tracing_metadata
 
 log = logging.getLogger("eduassist.chat")
 
@@ -27,7 +27,7 @@ def _config(ctx: UserContext) -> dict:
     return {
         "configurable": {"thread_id": ctx.thread_id},
         "callbacks": tracing_callbacks(ctx),
-        "metadata": {"user_id": ctx.user_id, "role": ctx.role, "run_id": ctx.run_id},
+        "metadata": {"user_id": ctx.user_id, "role": ctx.role, "run_id": ctx.run_id, **tracing_metadata(ctx)},
         "recursion_limit": 50,
     }
 
