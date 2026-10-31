@@ -8,6 +8,7 @@ import psycopg
 
 from eduassist.config import get_settings
 from eduassist.db import ro_pool
+from eduassist.formatting import vn_number
 from eduassist.security.sql_guard import validate_and_limit
 
 AGENT_READABLE_TABLES = {"khoa_hoc", "lop_hoc", "hoc_vien", "don_hang", "thanh_toan", "voucher"}
@@ -35,9 +36,9 @@ def _fmt(v) -> str:
     if v is None:
         return ""
     if isinstance(v, Decimal):
-        return f"{v:,.0f}" if v == v.to_integral_value() else f"{v:,.2f}"
-    if isinstance(v, int) and abs(v) >= 10_000:
-        return f"{v:,}"
+        return vn_number(int(v) if v == v.to_integral_value() else float(v))
+    if isinstance(v, int) and not isinstance(v, bool) and abs(v) >= 10_000:
+        return vn_number(v)
     if isinstance(v, (date, datetime)):
         return v.isoformat()
     return str(v).replace("|", "/").replace("\n", " ")

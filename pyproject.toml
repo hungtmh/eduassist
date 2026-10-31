@@ -26,6 +26,7 @@ dependencies = [
 
 [project.scripts]
 eduassist-setup = "eduassist.scripts.setup:main"
+eduassist-chat = "eduassist.cli:main"
 
 [tool.ruff]
 line-length = 120
