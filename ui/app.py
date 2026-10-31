@@ -6,6 +6,7 @@ uv run --group ui chainlit run ui/app.py --port 8001
 import json
 import os
 import uuid
+from contextlib import suppress
 
 import chainlit as cl
 import httpx
@@ -69,10 +70,8 @@ async def _stream(path: str, body: dict) -> list[tuple[str, dict]]:
     ):
         if r.status_code != 200:
             detail = (await r.aread()).decode()
-            try:
+            with suppress(ValueError, KeyError):
                 detail = json.loads(detail)["detail"]
-            except (ValueError, KeyError):
-                pass
             await cl.Message(f"⚠️ {detail}").send()
             return events
         event = None
