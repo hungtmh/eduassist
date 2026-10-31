@@ -1,4 +1,5 @@
 """Cấu hình đọc từ biến môi trường / file .env (có kiểm tra kiểu)."""
+
 from functools import lru_cache
 
 from pydantic import SecretStr
@@ -11,7 +12,7 @@ class Settings(BaseSettings):
     # LLM
     groq_api_key: SecretStr = SecretStr("")
     llm_model: str = "openai/gpt-oss-120b"
-    llm_fallback_model: str = "llama-3.3-70b-versatile"
+    llm_fallback_model: str = "openai/gpt-oss-20b"
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
     # Database: app_rw = chủ sở hữu schema; agent_ro = chỉ SELECT (dùng cho Text-to-SQL)

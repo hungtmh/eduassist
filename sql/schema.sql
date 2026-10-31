@@ -140,6 +140,10 @@ CREATE TABLE IF NOT EXISTS policy_chunks (
     content    TEXT NOT NULL,
     embedding  vector(384) NOT NULL
 );
+-- Full-text cho hybrid search (vector + từ khoá). Cấu hình 'simple': tách theo âm tiết, giữ dấu tiếng Việt
+ALTER TABLE policy_chunks ADD COLUMN IF NOT EXISTS tsv tsvector
+    GENERATED ALWAYS AS (to_tsvector('simple', section || ' ' || content)) STORED;
+CREATE INDEX IF NOT EXISTS policy_chunks_tsv_idx ON policy_chunks USING gin (tsv);
 
 CREATE TABLE IF NOT EXISTS sql_examples (
     id          SERIAL PRIMARY KEY,

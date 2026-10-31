@@ -4,6 +4,7 @@
 - ro_pool  : user agent_ro - CHỈ dùng cho câu SQL do LLM sinh ra. Database tự chặn mọi lệnh ghi,
              kể cả khi lớp kiểm tra sqlglot bị vượt qua.
 """
+
 from functools import lru_cache
 
 from psycopg.rows import dict_row

@@ -1,8 +1,9 @@
 """Khởi tạo database: schema, role read-only, dữ liệu giả lập, tài khoản demo, bảng của LangGraph, vector.
 
-    uv run eduassist-setup            # idempotent, chỉ seed khi DB trống
-    uv run eduassist-setup --reset    # xoá dữ liệu nghiệp vụ & seed lại
+uv run eduassist-setup            # idempotent, chỉ seed khi DB trống
+uv run eduassist-setup --reset    # xoá dữ liệu nghiệp vụ & seed lại
 """
+
 import argparse
 import logging
 from datetime import date
@@ -36,12 +37,18 @@ def ensure_readonly_role(conn: psycopg.Connection) -> None:
     conn.execute("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM agent_ro")
     conn.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO agent_ro").format(sql.Identifier(conn.info.dbname)))
     conn.execute("GRANT USAGE ON SCHEMA public TO agent_ro")
-    conn.execute(sql.SQL("GRANT SELECT ON {} TO agent_ro").format(
-        sql.SQL(", ").join(sql.Identifier(t) for t in AGENT_READABLE_TABLES)))
+    conn.execute(
+        sql.SQL("GRANT SELECT ON {} TO agent_ro").format(
+            sql.SQL(", ").join(sql.Identifier(t) for t in AGENT_READABLE_TABLES)
+        )
+    )
     # Lớp phòng thủ ở chính database: mọi transaction của agent_ro mặc định read-only + có timeout
     conn.execute("ALTER ROLE agent_ro SET default_transaction_read_only = on")
-    conn.execute(sql.SQL("ALTER ROLE agent_ro SET statement_timeout = {}").format(
-        sql.Literal(f"{get_settings().sql_timeout_ms}ms")))
+    conn.execute(
+        sql.SQL("ALTER ROLE agent_ro SET statement_timeout = {}").format(
+            sql.Literal(f"{get_settings().sql_timeout_ms}ms")
+        )
+    )
     log.info("role agent_ro ok (SELECT trên: %s)", ", ".join(AGENT_READABLE_TABLES))
 
 
@@ -55,17 +62,26 @@ def seed(conn: psycopg.Connection, reset: bool) -> None:
     for table in ["khoa_hoc", "lop_hoc", "hoc_vien", "don_hang", "thanh_toan"]:
         rows = getattr(ds, table)
         cols = list(rows[0].keys())
-        with conn.cursor() as cur:
-            with cur.copy(sql.SQL("COPY {} ({}) FROM STDIN").format(
-                    sql.Identifier(table), sql.SQL(", ").join(map(sql.Identifier, cols)))) as copy:
-                for r in rows:
-                    copy.write_row([r[c] for c in cols])
-        conn.execute(sql.SQL("SELECT setval(pg_get_serial_sequence({}, 'id'), (SELECT max(id) FROM {}))").format(
-            sql.Literal(table), sql.Identifier(table)))
+        with (
+            conn.cursor() as cur,
+            cur.copy(
+                sql.SQL("COPY {} ({}) FROM STDIN").format(
+                    sql.Identifier(table), sql.SQL(", ").join(map(sql.Identifier, cols))
+                )
+            ) as copy,
+        ):
+            for r in rows:
+                copy.write_row([r[c] for c in cols])
+        conn.execute(
+            sql.SQL("SELECT setval(pg_get_serial_sequence({}, 'id'), (SELECT max(id) FROM {}))").format(
+                sql.Literal(table), sql.Identifier(table)
+            )
+        )
         log.info("seed %-10s %5d dòng", table, len(rows))
     for username, password, role, display, hv_id in DEMO_USERS:
         conn.execute(
-            "INSERT INTO app_user (username, password_hash, role, display_name, hoc_vien_id) VALUES (%s, %s, %s, %s, %s)",
+            "INSERT INTO app_user (username, password_hash, role, display_name, hoc_vien_id)"
+            " VALUES (%s, %s, %s, %s, %s)",
             (username, hash_password(password), role, display, hv_id),
         )
     log.info("tài khoản demo: %s (mật khẩu demo123)", ", ".join(u[0] for u in DEMO_USERS))
