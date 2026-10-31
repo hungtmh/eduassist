@@ -1,0 +1,56 @@
+# Chạy hạ tầng khi dev:   docker compose up -d db mailpit
+# Chạy toàn bộ hệ thống:   docker compose --profile app up -d --build
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: eduassist
+      POSTGRES_USER: app_rw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app_rw_dev_pw}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_rw -d eduassist"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    # SMTP giả: bắt mọi email agent gửi, xem tại http://localhost:8025
+    image: axllent/mailpit:v1.27
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+  api:
+    profiles: ["app"]
+    build: .
+    command: ["uvicorn", "eduassist.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://app_rw:${POSTGRES_PASSWORD:-app_rw_dev_pw}@db:5432/eduassist
+      AGENT_RO_URL: postgresql://agent_ro:${AGENT_RO_PASSWORD:-agent_ro_dev_pw}@db:5432/eduassist
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ui:
+    profiles: ["app"]
+    build: .
+    command: ["chainlit", "run", "ui/app.py", "--host", "0.0.0.0", "--port", "8001", "--headless"]
+    env_file: .env
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "8001:8001"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
