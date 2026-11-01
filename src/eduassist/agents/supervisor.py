@@ -5,7 +5,6 @@ Học viên không có tool ask_analytics / ask_action, nên dù prompt injectio
 không thể gọi tới - tool đó đơn giản là không tồn tại trong graph của họ.
 """
 
-import re
 import uuid
 from datetime import date
 from functools import lru_cache
@@ -74,20 +73,16 @@ def _subagents(for_student: bool) -> dict:
     }
 
 
-SOURCE_RE = re.compile(r"Nguồn:\s*([^\n)]+)")
-
-
 def verified_sources(answer: str) -> list[str]:
-    """Trích các nguồn agent tư vấn đã ghi, CHỈ giữ nguồn có thật trong policy_chunks (chống trích dẫn bịa)."""
-    cited = []
-    for match in SOURCE_RE.findall(answer):
-        for part in re.split(r";|,(?=\s*\d\d_)", match):
-            part = part.strip(" .)*`\"'")
-            if part:
-                cited.append(part)
-    valid = known_sources()
-    # So khớp sau khi bỏ dấu: LLM hay "sửa" tên file thành có dấu (bao_luu -> bao_lưu)
-    return list(dict.fromkeys(valid[fold(c)] for c in cited if fold(c) in valid))
+    """Các nguồn agent tư vấn đã trích, CHỈ gồm nguồn có thật trong policy_chunks (chống trích dẫn bịa).
+
+    Không parse theo định dạng: LLM ghi nguồn đủ kiểu ("Nguồn: x", "(nguồn: x)", chép cả thẻ <tai_lieu nguon="x">,
+    sửa tên file thành có dấu). Thay vào đó tìm từng nguồn có thật trong câu trả lời đã bỏ dấu/ký tự đặc biệt,
+    sắp theo vị trí xuất hiện.
+    """
+    text = fold(answer)
+    found = [(text.find(key), name) for key, name in known_sources().items() if key in text]
+    return [name for _, name in sorted(found)]
 
 
 @lru_cache

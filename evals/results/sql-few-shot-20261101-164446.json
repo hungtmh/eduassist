@@ -1,0 +1,153 @@
+{
+  "suite": "sql",
+  "tag": "few-shot",
+  "model": "openai/gpt-oss-120b",
+  "date": "20261101-164446",
+  "n": 15,
+  "summary": {
+    "execution_accuracy": 0.933,
+    "number_faithfulness": 0.933,
+    "avg_sql_attempts": 1.0,
+    "avg_latency_s": 4.0,
+    "few_shot": true
+  },
+  "rows": [
+    {
+      "id": "sql01",
+      "ok": true,
+      "attempts": 1,
+      "secs": 2.3,
+      "sql": "SELECT COUNT(*) AS so_khoa_hoc FROM khoa_hoc WHERE danh_muc = 'Tiếng Anh' LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql02",
+      "ok": true,
+      "attempts": 1,
+      "secs": 2.2,
+      "sql": "SELECT ROUND(AVG(hoc_phi)) AS avg_hoc_phi FROM khoa_hoc WHERE danh_muc ILIKE '%Lập trình%' LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql03",
+      "ok": true,
+      "attempts": 1,
+      "secs": 3.5,
+      "sql": "SELECT SUM(so_tien) AS doanh_thu FROM thanh_toan WHERE ngay_thanh_toan >= DATE_TRUNC('MONTH', CURRENT_DATE) - INTERVAL '1 MONTH' AND ngay_thanh_toan < DATE_TRUNC('MONTH', CURRENT_DATE) LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql04",
+      "ok": false,
+      "attempts": 1,
+      "secs": 8.3,
+      "sql": "SELECT COUNT(*) AS so_lop_online FROM lop_hoc WHERE hinh_thuc = 'online' LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql05",
+      "ok": true,
+      "attempts": 1,
+      "secs": 2.4,
+      "sql": "WITH dt AS (SELECT don_hang_id, SUM(so_tien) AS tong FROM thanh_toan GROUP BY don_hang_id) SELECT COALESCE(SUM(dh.thanh_tien - COALESCE(dt.tong, 0)), 0) AS tong_con_no FROM don_hang AS dh LEFT JOIN dt ON dt.don_hang_id = dh.id WHERE dh.trang_thai IN ('chua_thanh_toan', 'thanh_toan_mot_phan') LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql06",
+      "ok": true,
+      "attempts": 1,
+      "secs": 2.6,
+      "sql": "SELECT lh.ca_hoc, COUNT(*) AS so_luot_dang_ky FROM don_hang AS dh JOIN lop_hoc AS lh ON lh.id = dh.lop_hoc_id WHERE dh.trang_thai <> 'da_huy' GROUP BY lh.ca_hoc ORDER BY so_luot_dang_ky DESC LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql07",
+      "ok": true,
+      "attempts": 1,
+      "secs": 1.3,
+      "sql": "SELECT COUNT(*) AS so_hoc_vien FROM hoc_vien WHERE thanh_pho ILIKE 'Hà Nội' LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql08",
+      "ok": true,
+      "attempts": 1,
+      "secs": 3.6,
+      "sql": "SELECT kh.danh_muc, SUM(tt.so_tien) AS doanh_thu FROM thanh_toan AS tt JOIN don_hang AS dh ON dh.id = tt.don_hang_id JOIN lop_hoc AS lh ON lh.id = dh.lop_hoc_id JOIN khoa_hoc AS kh ON kh.id = lh.khoa_hoc_id WHERE tt.ngay_thanh_toan >= DATE_TRUNC('YEAR', CURRENT_DATE) AND tt.ngay_thanh_toan < CURRENT_DATE + INTERVAL '1 DAY' GROUP BY kh.danh_muc ORDER BY doanh_thu DESC LIMIT 200",
+      "invented_numbers": [
+        "1291"
+      ],
+      "faithful_numbers": false
+    },
+    {
+      "id": "sql09",
+      "ok": true,
+      "attempts": 1,
+      "secs": 2.9,
+      "sql": "SELECT COUNT(DISTINCT dh.id) AS so_don_hang_hoan_tien FROM don_hang AS dh JOIN thanh_toan AS tt ON tt.don_hang_id = dh.id WHERE tt.so_tien < 0 LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql10",
+      "ok": true,
+      "attempts": 1,
+      "secs": 1.8,
+      "sql": "SELECT ROUND(CAST(100.0 * SUM(CASE WHEN nguon ILIKE '%facebook%' THEN 1 ELSE 0 END) / COUNT(*) AS DECIMAL), 1) AS pct_facebook FROM hoc_vien LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql11",
+      "ok": true,
+      "attempts": 1,
+      "secs": 1.6,
+      "sql": "SELECT COUNT(*) AS so_hoc_vien_moi_30ngay FROM hoc_vien WHERE ngay_dang_ky >= CURRENT_DATE - INTERVAL '30 DAYS' LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql12",
+      "ok": true,
+      "attempts": 1,
+      "secs": 2.4,
+      "sql": "SELECT SUM(giam_gia) AS tong_giam_gia FROM don_hang WHERE trang_thai <> 'da_huy' LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql13",
+      "ok": true,
+      "attempts": 1,
+      "secs": 6.4,
+      "sql": "SELECT kh.trinh_do, COUNT(*) AS so_luot_dang_ky FROM don_hang AS dh JOIN lop_hoc AS lh ON lh.id = dh.lop_hoc_id JOIN khoa_hoc AS kh ON kh.id = lh.khoa_hoc_id WHERE dh.trang_thai <> 'da_huy' GROUP BY kh.trinh_do ORDER BY kh.trinh_do LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql14",
+      "ok": true,
+      "attempts": 1,
+      "secs": 11.0,
+      "sql": "SELECT COUNT(*) AS lan_thanh_toan_tien_mat FROM thanh_toan WHERE phuong_thuc ILIKE '%tien_mat%' LIMIT 200",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    },
+    {
+      "id": "sql15",
+      "ok": true,
+      "attempts": 1,
+      "secs": 7.0,
+      "sql": "SELECT kh.ten AS khoa_hoc, kh.hoc_phi AS hoc_phi FROM khoa_hoc AS kh ORDER BY kh.hoc_phi DESC LIMIT 1",
+      "invented_numbers": [],
+      "faithful_numbers": true
+    }
+  ]
+}

@@ -33,6 +33,18 @@ def test_verified_sources_keeps_real_and_drops_invented(fake_sources):
     ]
 
 
+def test_verified_sources_formats_seen_in_eval(fake_sources):
+    # Các dạng LLM thực sự đã ghi trong lần chạy eval: chép thẻ XML, nguồn nằm trong ngoặc có ngoặc lồng
+    answer = (
+        'Hoàn 100%.\n  Nguồn: <tai_lieu nguon="03_bao_luu_hoan_tien.md › Hoàn học phí">.\n'
+        "Nguồn: Trả góp (nguồn: 02_hoc_phi_va_uu_dai.md › Trả góp học phí)"
+    )
+    assert supervisor.verified_sources(answer) == [
+        "03_bao_luu_hoan_tien.md › Hoàn học phí",
+        "02_hoc_phi_va_uu_dai.md › Trả góp học phí",
+    ]
+
+
 def test_verified_sources_deduplicates(fake_sources):
     answer = "Nguồn: 03_bao_luu_hoan_tien.md › Hoàn học phí\nNguồn: 03_bao_luu_hoan_tien.md › Hoàn học phí"
     assert supervisor.verified_sources(answer) == ["03_bao_luu_hoan_tien.md › Hoàn học phí"]

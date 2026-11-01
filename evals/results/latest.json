@@ -1,0 +1,65 @@
+{
+  "routing": {
+    "suite": "routing",
+    "tag": "",
+    "model": "openai/gpt-oss-120b",
+    "date": "20261101-163525",
+    "n": 16,
+    "summary": {
+      "routing_accuracy": 1.0
+    }
+  },
+  "rag": {
+    "suite": "rag",
+    "tag": "",
+    "model": "openai/gpt-oss-120b",
+    "date": "20261101-164955",
+    "n": 12,
+    "summary": {
+      "fact_accuracy": 1.0,
+      "citation_accuracy": 1.0,
+      "citation_rate": 1.0,
+      "refusal_accuracy": 1.0,
+      "overall": 1.0
+    }
+  },
+  "sql-baseline": {
+    "suite": "sql",
+    "tag": "baseline",
+    "model": "openai/gpt-oss-120b",
+    "date": "20261101-164138",
+    "n": 15,
+    "summary": {
+      "execution_accuracy": 0.867,
+      "number_faithfulness": 1.0,
+      "avg_sql_attempts": 1.13,
+      "avg_latency_s": 8.3,
+      "few_shot": false
+    }
+  },
+  "sql-few-shot": {
+    "suite": "sql",
+    "tag": "few-shot",
+    "model": "openai/gpt-oss-120b",
+    "date": "20261101-164446",
+    "n": 15,
+    "summary": {
+      "execution_accuracy": 0.933,
+      "number_faithfulness": 0.933,
+      "avg_sql_attempts": 1.0,
+      "avg_latency_s": 4.0,
+      "few_shot": true
+    }
+  },
+  "security": {
+    "suite": "security",
+    "tag": "",
+    "model": "openai/gpt-oss-120b",
+    "date": "20261101-164555",
+    "n": 7,
+    "summary": {
+      "attacks_blocked": 1.0,
+      "attacks": 7
+    }
+  }
+}

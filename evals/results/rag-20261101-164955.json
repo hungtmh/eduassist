@@ -1,0 +1,165 @@
+{
+  "suite": "rag",
+  "tag": "",
+  "model": "openai/gpt-oss-120b",
+  "date": "20261101-164955",
+  "n": 12,
+  "summary": {
+    "fact_accuracy": 1.0,
+    "citation_accuracy": 1.0,
+    "citation_rate": 1.0,
+    "refusal_accuracy": 1.0,
+    "overall": 1.0
+  },
+  "rows": [
+    {
+      "id": "rag01",
+      "answerable": true,
+      "facts_ok": true,
+      "cited_expected": true,
+      "has_verified_source": true,
+      "ok": true,
+      "secs": 7.3,
+      "sources": [
+        "02_hoc_phi_va_uu_dai.md › Các chương trình ưu đãi"
+      ],
+      "answer": "- Khi đăng ký và đóng đủ học phí **trước ngày khai giảng ít nhất 14 ngày** sẽ được **giảm 10%** so với mức học phí quy định.  \n  Nguồn: 02_hoc_phi_va_uu_dai.md › Các chương trình ưu đãi"
+    },
+    {
+      "id": "rag02",
+      "answerable": true,
+      "facts_ok": true,
+      "cited_expected": true,
+      "has_verified_source": true,
+      "ok": true,
+      "secs": 1.9,
+      "sources": [
+        "02_hoc_phi_va_uu_dai.md › Trả góp học phí"
+      ],
+      "answer": "Có, khoá học có học phí 6 triệu đồng được phép trả góp. Theo chính sách, học phí từ 5.000.000 đ trở lên sẽ được chia làm **2 đợt**:  \n- Đợt 1: đóng 50 % khi đăng ký.  \n- Đợt 2: đóng 50 % còn lại trước buổi học thứ 10 (không mất phí, không cần giấy tờ).  \n\nNguồn: 02_hoc_phi_va_uu_dai.md › Trả góp học phí"
+    },
+    {
+      "id": "rag03",
+      "answerable": true,
+      "facts_ok": true,
+      "cited_expected": true,
+      "has_verified_source": true,
+      "ok": true,
+      "secs": 1.9,
+      "sources": [
+        "03_bao_luu_hoan_tien.md › Hoàn học phí"
+      ],
+      "answer": "- Nếu hủy đăng ký trước ngày khai giảng ít nhất **7 ngày** (ví dụ hủy 10 ngày trước), trung tâm sẽ hoàn **100 % học phí đã đóng**.  \nNguồn: 03_bao_luu_hoan_tien.md › Hoàn học phí"
+    },
+    {
+      "id": "rag04",
+      "answerable": true,
+      "facts_ok": true,
+      "cited_expected": true,
+      "has_verified_source": true,
+      "ok": true,
+      "secs": 3.2,
+      "sources": [
+        "03_bao_luu_hoan_tien.md › Bảo lưu"
+      ],
+      "answer": "- Thời gian bảo lưu tối đa **6 tháng** (chỉ được bảo lưu 1 lần)  \n- Phí bảo lưu **300.000 đ**  \n- Trường hợp ốm đau, thai sản có giấy xác nhận y tế sẽ được **miễn phí** bảo lưu.  \n\nNguồn: 03_bao_luu_hoan_tien.md › Bảo lưu"
+    },
+    {
+      "id": "rag05",
+      "answerable": true,
+      "facts_ok": true,
+      "cited_expected": true,
+      "has_verified_source": true,
+      "ok": true,
+      "secs": 2.0,
+      "sources": [
+        "04_quy_che_hoc_vien.md › Chuyên cần"
+      ],
+      "answer": "Học viên phải tham gia ít nhất 80 % số buổi học. Nếu nghỉ quá 20 % tổng số buổi (tức là vắng hơn 80 % buổi), sẽ không được cấp chứng nhận.  \nNguồn: 04_quy_che_hoc_vien.md › Chuyên cần"
+    },
+    {
+      "id": "rag06",
+      "answerable": true,
+      "facts_ok": true,
+      "cited_expected": true,
+      "has_verified_source": true,
+      "ok": true,
+      "secs": 1.9,
+      "sources": [
+        "04_quy_che_hoc_vien.md › Cam kết đầu ra"
+      ],
+      "answer": "- Khoá IELTS Intensive có **cam kết đầu ra 6.5**. Nếu bạn đã tham gia đủ ≥ 90 % buổi học, hoàn thành bài tập về nhà và thi IELTS chính thức trong vòng 3 tháng sau khoá mà vẫn chưa đạt 6.5, trung tâm sẽ cho bạn **học lại miễn phí 1 lần**.  \n  Nguồn: 04_quy_che_hoc_vien.md › Cam kết đầu ra  \n\n- Để được hưởng quyền học lại, bạn cần đáp ứng đầy đủ các điều kiện trên; nếu không đủ (ví dụ: không đạt tỷ lệ chuyên cần hoặc không thi trong thời gian quy định) thì sẽ không được miễn phí.  \n  Nguồn: 04_quy"
+    },
+    {
+      "id": "rag07",
+      "answerable": true,
+      "facts_ok": true,
+      "cited_expected": true,
+      "has_verified_source": true,
+      "ok": true,
+      "secs": 1.5,
+      "sources": [
+        "01_gioi_thieu_trung_tam.md › Cơ sở và giờ làm việc"
+      ],
+      "answer": "Văn phòng tư vấn của trung tâm mở cửa Chủ nhật từ 8h00 đến **17h00**.  \nNguồn: 01_gioi_thieu_trung_tam.md › Cơ sở và giờ làm việc"
+    },
+    {
+      "id": "rag08",
+      "answerable": true,
+      "facts_ok": true,
+      "cited_expected": true,
+      "has_verified_source": true,
+      "ok": true,
+      "secs": 1.9,
+      "sources": [
+        "03_bao_luu_hoan_tien.md › Chuyển lớp và chuyển nhượng"
+      ],
+      "answer": "- Có thể chuyển nhượng suất học cho em gái của bạn.  \n- Phí chuyển nhượng là **200.000 đ** và chỉ được thực hiện **trước buổi học thứ 5**.  \nNguồn: 03_bao_luu_hoan_tien.md › Chuyển lớp và chuyển nhượng"
+    },
+    {
+      "id": "rag09",
+      "answerable": true,
+      "facts_ok": true,
+      "cited_expected": true,
+      "has_verified_source": true,
+      "ok": true,
+      "secs": 1.6,
+      "sources": [
+        "05_tu_van_va_hoc_thu.md › Học thử"
+      ],
+      "answer": "- Trung tâm cho học thử **miễn phí 1 buổi** cho mỗi học viên ở lớp đang mở của khoá mà họ quan tâm (trừ các khoá Kỹ năng mềm). Đăng ký qua hotline, fanpage hoặc Zalo OA và cần đăng ký trước 1 ngày.  \nNguồn: 05_tu_van_va_hoc_thu.md › Học thử"
+    },
+    {
+      "id": "rag10",
+      "answerable": true,
+      "facts_ok": true,
+      "cited_expected": true,
+      "has_verified_source": true,
+      "ok": true,
+      "secs": 1.8,
+      "sources": [
+        "02_hoc_phi_va_uu_dai.md › Quy tắc cộng dồn ưu đãi",
+        "02_hoc_phi_va_uu_dai.md › Các chương trình ưu đãi"
+      ],
+      "answer": "- Voucher do trung tâm cấp có thể cộng thêm với ưu đãi đăng ký nhóm.  \n- Tuy nhiên, tổng mức giảm (voucher + giảm nhóm) không được vượt quá **15 % học phí**.  \n\nNguồn: 02_hoc_phi_va_uu_dai.md › Quy tắc cộng dồn ưu đãi  \nNguồn: 02_hoc_phi_va_uu_dai.md › Các chương trình ưu đãi"
+    },
+    {
+      "id": "rag11",
+      "answerable": false,
+      "refused": true,
+      "ok": true,
+      "secs": 1.6,
+      "sources": [],
+      "answer": "Mình chưa tìm thấy thông tin này trong tài liệu của trung tâm. Bạn có thể gọi hotline 1900 0000 để được hỗ trợ chi tiết."
+    },
+    {
+      "id": "rag12",
+      "answerable": false,
+      "refused": true,
+      "ok": true,
+      "secs": 0.8,
+      "sources": [],
+      "answer": "Mình chưa tìm thấy thông tin này trong tài liệu của trung tâm. Bạn có thể gọi hotline 1900 0000 để được hỗ trợ chi tiết hơn."
+    }
+  ]
+}

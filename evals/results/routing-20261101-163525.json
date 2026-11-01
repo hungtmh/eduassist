@@ -1,0 +1,192 @@
+{
+  "suite": "routing",
+  "tag": "",
+  "model": "openai/gpt-oss-120b",
+  "date": "20261101-163525",
+  "n": 16,
+  "summary": {
+    "routing_accuracy": 1.0
+  },
+  "rows": [
+    {
+      "id": "rt01",
+      "ok": true,
+      "called": [
+        "none"
+      ],
+      "expect": [
+        "none"
+      ],
+      "secs": 1.6
+    },
+    {
+      "id": "rt02",
+      "ok": true,
+      "called": [
+        "none"
+      ],
+      "expect": [
+        "none"
+      ],
+      "secs": 0.9
+    },
+    {
+      "id": "rt03",
+      "ok": true,
+      "called": [
+        "ask_advisor"
+      ],
+      "expect": [
+        "ask_advisor"
+      ],
+      "secs": 0.9
+    },
+    {
+      "id": "rt04",
+      "ok": true,
+      "called": [
+        "ask_advisor"
+      ],
+      "expect": [
+        "ask_advisor"
+      ],
+      "secs": 0.9
+    },
+    {
+      "id": "rt05",
+      "ok": true,
+      "called": [
+        "ask_advisor"
+      ],
+      "expect": [
+        "ask_advisor",
+        "ask_analytics"
+      ],
+      "secs": 0.7
+    },
+    {
+      "id": "rt06",
+      "ok": true,
+      "called": [
+        "ask_analytics"
+      ],
+      "expect": [
+        "ask_analytics"
+      ],
+      "secs": 0.8
+    },
+    {
+      "id": "rt07",
+      "ok": true,
+      "called": [
+        "ask_analytics"
+      ],
+      "expect": [
+        "ask_analytics"
+      ],
+      "secs": 1.1
+    },
+    {
+      "id": "rt08",
+      "ok": true,
+      "called": [
+        "ask_analytics"
+      ],
+      "expect": [
+        "ask_analytics"
+      ],
+      "secs": 1.6
+    },
+    {
+      "id": "rt09",
+      "ok": true,
+      "called": [
+        "ask_action"
+      ],
+      "expect": [
+        "ask_action"
+      ],
+      "secs": 1.8
+    },
+    {
+      "id": "rt10",
+      "ok": true,
+      "called": [
+        "ask_analytics"
+      ],
+      "expect": [
+        "ask_action",
+        "ask_analytics"
+      ],
+      "secs": 1.0
+    },
+    {
+      "id": "rt11",
+      "ok": true,
+      "called": [
+        "ask_analytics"
+      ],
+      "expect": [
+        "ask_analytics"
+      ],
+      "secs": 0.9
+    },
+    {
+      "id": "rt12",
+      "ok": true,
+      "called": [
+        "ask_analytics"
+      ],
+      "expect": [
+        "ask_analytics"
+      ],
+      "secs": 0.8
+    },
+    {
+      "id": "rt13",
+      "ok": true,
+      "called": [
+        "ask_advisor"
+      ],
+      "expect": [
+        "ask_advisor"
+      ],
+      "secs": 0.8
+    },
+    {
+      "id": "rt14",
+      "ok": true,
+      "called": [
+        "ask_advisor"
+      ],
+      "expect": [
+        "ask_advisor",
+        "remember_user_fact"
+      ],
+      "secs": 0.9
+    },
+    {
+      "id": "rt15",
+      "ok": true,
+      "called": [
+        "none"
+      ],
+      "expect": [
+        "none",
+        "ask_advisor"
+      ],
+      "secs": 0.9
+    },
+    {
+      "id": "rt16",
+      "ok": true,
+      "called": [
+        "ask_advisor"
+      ],
+      "expect": [
+        "ask_advisor"
+      ],
+      "secs": 0.9
+    }
+  ]
+}

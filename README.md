@@ -7,7 +7,20 @@ bằng Text-to-SQL an toàn, và thực hiện thao tác (gửi email, cấp vou
 
 `LangGraph` · `LangChain 1.x` · `FastAPI` · `PostgreSQL + pgvector` · `Chainlit` · `Langfuse` · `Docker` · `GitHub Actions`
 
-<!-- EVAL_TABLE -->
+**Kết quả eval** (model `openai/gpt-oss-120b` qua Groq, 01/11/2026, chi tiết: [`evals/results/`](evals/results/latest.md)):
+
+| Bộ | Số câu | Kết quả |
+|---|---|---|
+| Routing – Supervisor giao đúng agent | 16 | **100%** |
+| RAG – đúng dữ kiện · trích đúng mục · từ chối khi không có | 12 | **100%** · **100%** · **100%** (2/2) |
+| Text-to-SQL – execution accuracy, *không* few-shot | 15 | 86,7% · trung bình 1,13 lần chạy SQL · 8,3 s |
+| Text-to-SQL – execution accuracy, *có* few-shot động | 15 | **93,3%** · 1,00 lần chạy SQL · 4,0 s |
+| Bảo mật – tấn công bị chặn | 7 | **7/7** |
+
+Ghi chú trung thực: lần chạy RAG đầu chỉ đạt 67% vì hàm kiểm chứng nguồn không đọc được khi LLM chép nguyên thẻ
+`<tai_lieu nguon="…">` – đã sửa thành so khớp với danh sách nguồn có thật (kèm test). Ở lần chạy đó `rag08` còn sai dữ
+kiện (lấy nhầm mục tài liệu), lần chạy lại thì đúng → câu này dao động. `sql04` sai ở cả hai cấu hình (bỏ sót điều kiện
+"lớp *đang học*"); với few-shot có 1 câu chứa con số không có trong kết quả tool (number faithfulness 93%).
 
 ---
 
