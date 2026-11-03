@@ -35,6 +35,8 @@ Có thể gọi nhiều tool lần lượt cho một câu hỏi. Câu chào hỏ
 Giao việc bằng NGÔN NGỮ TỰ NHIÊN, đầy đủ ngữ cảnh. KHÔNG tự viết SQL - agent con tự biết cấu trúc dữ liệu.
 Người dùng đã yêu cầu thao tác (gửi email, cấp voucher) thì gọi ask_action luôn, KHÔNG hỏi lại "có muốn gửi không":
 hệ thống sẽ tự hiện nút Duyệt / Từ chối cho người dùng trước khi thao tác thực sự chạy.
+Mỗi thao tác chỉ làm MỘT lần: phần "KẾT QUẢ THAO TÁC" trong kết quả ask_action là sự thật - đã gửi/đã tạo
+thì báo lại cho người dùng, TUYỆT ĐỐI không gọi lại ask_action cho cùng việc đó.
 Khi nhận kết quả từ agent con: chuyển tiếp trung thực, GIỮ NGUYÊN bảng số liệu và câu SQL;
 không thêm con số hay chính sách nào không có trong kết quả. Không cần chép lại dòng "Nguồn: ..." -
 giao diện tự hiển thị nguồn tài liệu đã được kiểm chứng.
@@ -50,8 +52,11 @@ TOOL_GUIDE = {
     "ask_advisor_student": "- ask_advisor: chính sách, học phí, ưu đãi, khoá học, lịch khai giảng, tư vấn lộ trình,"
     " các lớp chính người dùng đã đăng ký và học phí còn nợ.",
     "ask_analytics": "- ask_analytics: số liệu kinh doanh, doanh thu, công nợ, danh sách học viên/lớp (có id, email).",
-    "ask_action": "- ask_action: gửi email, cấp mã giảm giá. Truyền ĐỦ thông tin: người nhận (email hoặc hoc_vien_id),"
-    " nội dung, mức giảm. Cần danh sách người nhận thì hỏi ask_analytics TRƯỚC.",
+    "ask_action": "- ask_action: gửi email, cấp mã giảm giá, NHẮC NỢ HỌC PHÍ. Nhắc nợ: gọi ask_action THẲNG"
+    " (agent vận hành tự tính công nợ, tự gửi từng người) - KHÔNG hỏi ask_analytics lấy danh sách trước,"
+    " KHÔNG chép danh sách người nợ vào task; chỉ truyền phạm vi (tất cả / hoc_vien_id cụ thể) và hạn thanh toán"
+    " nếu người dùng có nói. Việc khác: truyền ĐỦ người nhận (email hoặc hoc_vien_id), nội dung, mức giảm;"
+    " cần tra danh sách người nhận thì hỏi ask_analytics TRƯỚC.",
 }
 
 
@@ -60,7 +65,13 @@ def _run_subagent(name: str, agent, task: str, runtime: ToolRuntime[UserContext]
     result = agent.invoke({"messages": [{"role": "user", "content": task}]}, context=runtime.context)
     answer = result["messages"][-1].content
     emit("agent_end", agent=name)
-    # Chỉ trả câu trả lời CUỐI: context của supervisor gọn, không lẫn các bước nội bộ của agent con
+    if name == "action":
+        # Thao tác có tác động thật: supervisor phải thấy KẾT QUẢ GỐC của tool, không chỉ lời tóm tắt của LLM.
+        # (Đã gặp: tool báo "Đã gửi 153 email" nhưng LLM tóm tắt "chờ duyệt" -> supervisor gửi lại lần nữa.)
+        done = [m.content for m in result["messages"] if m.type == "tool" and m.name != "get_student_contacts"]
+        if done:
+            answer += "\n\nKẾT QUẢ THAO TÁC (do hệ thống ghi, đây là sự thật):\n" + "\n".join(f"- {d}" for d in done)
+    # Ngoài ra chỉ trả câu trả lời CUỐI: context của supervisor gọn, không lẫn các bước nội bộ của agent con
     return answer
 
 

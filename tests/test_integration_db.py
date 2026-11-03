@@ -54,3 +54,21 @@ def test_runner_reads_business_data():
 def test_runner_blocks_before_database():
     with pytest.raises(SQLRejected):
         run_readonly("SELECT * FROM app_user")
+
+
+def test_payment_reminders_skip_recently_reminded_students():
+    from eduassist.agents.action import REMINDER_SUBJECT, find_debtors, reminder_targets
+    from eduassist.db import app_pool
+
+    debtor = find_debtors()[0]
+    with app_pool().connection() as conn:
+        row = conn.execute(
+            "INSERT INTO email_log (recipients, subject, body, sent_by) VALUES (%s, %s, 'test', 'pytest') RETURNING id",
+            ([debtor["email"]], REMINDER_SUBJECT),
+        ).fetchone()
+    try:
+        targets, skipped = reminder_targets([debtor["id"]])
+        assert targets == [] and skipped == 1
+    finally:
+        with app_pool().connection() as conn:
+            conn.execute("DELETE FROM email_log WHERE id = %s", (row["id"],))

@@ -39,7 +39,7 @@ def _interrupt_actions(interrupts) -> list[dict]:
     for it in unique.values():
         value = it.value if hasattr(it, "value") else it
         for req in (value or {}).get("action_requests", []):
-            actions.append({"name": req["name"], "args": req["args"]})
+            actions.append({"name": req["name"], "args": req["args"], "description": req.get("description", "")})
     return actions
 
 

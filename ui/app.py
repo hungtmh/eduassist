@@ -19,7 +19,11 @@ API_URL = os.environ.get("API_URL", "http://localhost:8000")
 TIMEOUT = httpx.Timeout(300, connect=10)
 
 AGENT_LABEL = {"advisor": "Tư vấn (RAG)", "analytics": "Phân tích dữ liệu (SQL)", "action": "Vận hành"}
-ACTION_LABEL = {"send_email": "Gửi email", "create_voucher": "Cấp mã giảm giá"}
+ACTION_LABEL = {
+    "send_email": "Gửi email",
+    "create_voucher": "Cấp mã giảm giá",
+    "send_payment_reminders": "Gửi email nhắc nợ",
+}
 ROLE_LABEL = {"student": "Học viên", "staff": "Nhân viên", "manager": "Quản lý"}
 
 
@@ -132,7 +136,8 @@ async def _render_step(data: dict, steps: dict[str, cl.Step]) -> None:
     elif kind == "courses":
         current.output += "\n📚 Tra danh sách khoá học\n"
     elif kind == "action":
-        current.output += f"\n⚙️ Đã thực hiện: {ACTION_LABEL.get(data['action'], data['action'])}\n"
+        n = f" ({data['recipients']} người nhận)" if data.get("recipients") else ""
+        current.output += f"\n⚙️ Đã thực hiện: {ACTION_LABEL.get(data['action'], data['action'])}{n}\n"
     elif kind == "memory":
         current.output += f"\n🧠 Ghi nhớ: {data['fact']}\n"
     elif kind == "agent_end":
@@ -143,6 +148,8 @@ async def _render_step(data: dict, steps: dict[str, cl.Step]) -> None:
 
 def _describe(action: dict) -> str:
     args = action["args"]
+    if action["name"] == "send_payment_reminders" and action.get("description"):
+        return action["description"]  # server soạn sẵn: số người nhận, tổng nợ, email mẫu
     if action["name"] == "send_email":
         return (
             f"**Gửi email** tới {', '.join(args.get('recipients', []))}\n\n"
