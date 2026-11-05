@@ -72,6 +72,11 @@ async def _stream(path: str, body: dict) -> list[tuple[str, dict]]:
         httpx.AsyncClient(base_url=API_URL, timeout=TIMEOUT, headers=_headers()) as client,
         client.stream("POST", path, json=body) as r,
     ):
+        if r.status_code == 401:
+            await cl.Message(
+                "🔒 Phiên đăng nhập đã hết hạn (8 giờ). Bấm vào avatar góc phải → **Logout**, rồi đăng nhập lại."
+            ).send()
+            return events
         if r.status_code != 200:
             detail = (await r.aread()).decode()
             with suppress(ValueError, KeyError):
