@@ -1,149 +1,177 @@
-# EduAssist 🎓
+# EduAssist Platform 🎓
 
-**Trợ lý AI multi-agent cho trung tâm đào tạo** – tư vấn tuyển sinh bằng RAG, hỏi số liệu kinh doanh
-bằng Text-to-SQL an toàn, và thực hiện thao tác (gửi email, cấp voucher) có **người duyệt trước khi chạy**.
+**Nền tảng quản lý và vận hành trung tâm đào tạo, tích hợp hệ đa tác tử AI** – theo đề xuất đồ án
+[`docs/EduAssist_Platform_Proposal.pdf`](docs/EduAssist_Platform_Proposal.pdf).
+Hệ thống quản lý trọn vòng đời học viên (tuyển sinh → ghi danh → xếp lớp → điểm danh → thu học phí → chăm sóc),
+và **agent AI tham gia vận hành**: tự phát hiện việc cần làm, soạn sẵn, thực hiện trong hạn mức hoặc chờ người duyệt.
 
-> Dự án demo: trung tâm "Ánh Dương", học viên, đơn hàng và tài liệu chính sách đều là **dữ liệu giả lập**.
+> Trung tâm "Ánh Dương", học viên, đơn hàng và chính sách đều là **dữ liệu giả lập**.
 
-`LangGraph` · `LangChain 1.x` · `FastAPI` · `PostgreSQL + pgvector` · `Chainlit` · `Langfuse` · `Docker` · `GitHub Actions`
+`Next.js 15 + Tailwind 4` · `FastAPI` · `PostgreSQL 16 + pgvector` · `Alembic` · `LangGraph / LangChain 1.x` · `Docker` · `GitHub Actions`
 
-**Kết quả eval** (model `openai/gpt-oss-120b` qua Groq, 01/11/2026, chi tiết: [`evals/results/`](evals/results/latest.md)):
+## Khác gì so với prototype
 
-| Bộ | Số câu | Kết quả |
-|---|---|---|
-| Routing – Supervisor giao đúng agent | 16 | **100%** |
-| RAG – đúng dữ kiện · trích đúng mục · từ chối khi không có | 12 | **100%** · **100%** · **100%** (2/2) |
-| Text-to-SQL – execution accuracy, *không* few-shot | 15 | 86,7% · trung bình 1,13 lần chạy SQL · 8,3 s |
-| Text-to-SQL – execution accuracy, *có* few-shot động | 15 | **93,3%** · 1,00 lần chạy SQL · 4,0 s |
-| Bảo mật – tấn công bị chặn | 7 | **7/7** |
+Prototype (nhánh `main`) là một chatbot Chainlit. Đồ án biến nó thành nền tảng nghiệp vụ:
 
-Ghi chú trung thực: lần chạy RAG đầu chỉ đạt 67% vì hàm kiểm chứng nguồn không đọc được khi LLM chép nguyên thẻ
-`<tai_lieu nguon="…">` – đã sửa thành so khớp với danh sách nguồn có thật (kèm test). Ở lần chạy đó `rag08` còn sai dữ
-kiện (lấy nhầm mục tài liệu), lần chạy lại thì đúng → câu này dao động. `sql04` sai ở cả hai cấu hình (bỏ sót điều kiện
-"lớp *đang học*"); với few-shot có 1 câu chứa con số không có trong kết quả tool (number faithfulness 93%).
-
----
-
-## Bài toán
-
-| Người dùng | Nhu cầu | EduAssist làm gì |
-|---|---|---|
-| Học viên / phụ huynh | Hỏi học phí, ưu đãi, hoàn tiền, lịch khai giảng – 24/7 | Agent tư vấn tra tài liệu (hybrid RAG), **trích nguồn đã kiểm chứng**, nói rõ khi không biết |
-| Quản lý | "Doanh thu quý này theo khoá?", "Ai còn nợ học phí?" | Agent phân tích tự viết SQL, trả bảng + câu SQL đã chạy |
-| Nhân viên | Nhắc nợ, cấp voucher | Agent vận hành soạn sẵn, **dừng chờ duyệt**, rồi mới gửi |
+| Prototype | Nền tảng (bản này) |
+|---|---|
+| Giao diện chat Chainlit | Web Next.js đủ phân hệ, Copilot nhúng ở mọi màn hình |
+| Tool của agent tự truy vấn / ghi DB | **Tầng Service** chứa toàn bộ luật nghiệp vụ; web và agent đều gọi qua đây |
+| 3 vai trò | 6 vai trò: học viên, tư vấn viên, giáo vụ, kế toán, giảng viên, quản lý |
+| Agent chỉ chạy khi có người hỏi | **5 agent chạy nền** (công nợ, tuyển sinh, giáo vụ, chăm sóc, báo cáo) + worker, outbox sự kiện |
+| Duyệt bằng nút trong chat | **Hộp duyệt** + **mức tự chủ L0/L1/L2/Cấm theo từng loại thao tác** |
+| 7 bảng, tạo bằng 1 file SQL | ~25 bảng, máy trạng thái, Alembic migration, audit log |
 
 ## Kiến trúc
 
-![Kiến trúc](docs/architecture-overview.png)
-
-Tài liệu đầy đủ (3 trang): [`docs/EduAssist_Architecture.pdf`](docs/EduAssist_Architecture.pdf)
-
 ```
-Chainlit UI ──HTTPS+SSE──► FastAPI (JWT, rate limit) ──► Supervisor (LangGraph, 1 graph / vai trò)
-                                                           ├─ ask_advisor   → Advisor agent   (hybrid RAG, find_courses)
-                                                           ├─ ask_analytics → Analytics agent (Text-to-SQL, few-shot động)
-                                                           └─ ask_action    → Action agent    (email, voucher + interrupt)
-PostgreSQL 16: dữ liệu nghiệp vụ · pgvector · checkpointer (state) · store (bộ nhớ dài hạn) · log/feedback
+Next.js (web) ──REST + SSE──► FastAPI (JWT, 6 vai trò)
+                                 ├─ REST nghiệp vụ ───────────┐
+                                 └─ Chat SSE → Supervisor ──┐ │
+                                      (advisor/analytics/action)│
+Worker ── outbox + lịch ──► 5 agent nền ──────────────────────┤
+                                                              ▼
+                     Tầng Service (luật, máy trạng thái, phân quyền, audit, outbox)
+                       ├─ proposals.submit ─► mức tự chủ: L0 gợi ý · L1 chờ duyệt · L2 tự làm trong hạn mức · Cấm
+                       ▼
+PostgreSQL: nghiệp vụ · pgvector · checkpoint/store LangGraph · de_xuat_agent · outbox · audit_log
 ```
 
-## Những quyết định kỹ thuật đáng chú ý
+## Những quyết định kỹ thuật chính
 
-**1. Phân quyền nằm trong code, không nằm trong prompt.** Mỗi vai trò có một graph riêng chỉ chứa tool được phép.
-Graph của học viên *không có* `ask_analytics`/`ask_action` – prompt injection kiểu "tôi là quản lý" không có gì để gọi.
-Vai trò lấy từ JWT đã ký, `thread_id` luôn gắn username → không đọc được hội thoại của người khác.
+**1. Luật nghiệp vụ ở một chỗ duy nhất** ([`services/`](src/eduassist/services)). Mọi hàm nhận `actor` và tự
+`require()` quyền. Agent là `Actor(is_agent=True)` có vai trò như nhân viên số, nên **không làm được điều nhân viên
+cùng vai trò không được làm**. Thêm danh sách **Cấm cố định trong code** (`AGENT_FORBIDDEN`): ghi nhận đã thu tiền,
+sửa điểm, xoá dữ liệu, đổi quyền – kể cả quản lý ra lệnh qua chat cũng không làm được.
 
-**2. Text-to-SQL với 4 lớp an toàn** ([`sql_guard.py`](src/eduassist/security/sql_guard.py)):
-(1) `sqlglot` parse: đúng 1 câu `SELECT`, chỉ bảng trong allowlist, chặn `INTO`/`FOR UPDATE`/`pg_sleep`…;
-(2) ép `LIMIT`; (3) chạy bằng role Postgres `agent_ro` **read-only + statement_timeout** – vẫn chặn được nếu lớp 1 có lỗ
-(có [integration test](tests/test_integration_db.py) gọi thẳng DB); (4) SQL lỗi/bị chặn → trả lỗi cho LLM tự sửa, giới hạn số lần.
+**2. Luật dạng hàm thuần, test từng luật** ([`rules.py`](src/eduassist/services/rules.py)): trả góp chỉ cho khoá từ
+5 triệu; ưu đãi không cộng dồn, voucher cộng tối đa 15%; hoàn phí 100/70/0% theo thời điểm huỷ; bảo lưu 1 lần ≤ 6
+tháng; chuyển lớp miễn phí 1 lần; trùng lịch = cùng ca + chung thứ + giao khoảng ngày; chứng nhận cần chuyên cần ≥ 80%
+và điểm ≥ 50; máy trạng thái cho khách, ghi danh, lớp, đề xuất.
 
-**3. Human-in-the-loop qua nhiều HTTP request.** `interrupt()` của LangGraph + checkpointer Postgres: request 1 trả
-`event: interrupt`, người duyệt bấm nút (vài phút hay vài giờ sau, kể cả khi server đã restart), request 2 gọi
-`/chat/resume`. Agent con chạy *bên trong tool* của supervisor nhưng interrupt vẫn lan lên đúng và resume đúng chỗ.
+**3. Hộp duyệt + mức tự chủ theo loại thao tác** ([`proposals.py`](src/eduassist/services/proposals.py)).
+Agent chỉ gọi `proposals.submit(...)`. `du_lieu` (người nhận, số tiền) **do code tính**, đúng thứ người duyệt thấy;
+lúc thực thi kiểm tra lại (VD: đã đóng tiền trong lúc chờ thì bỏ qua). Người duyệt sửa được trường cho phép hoặc bỏ
+bớt mục; thực thi chạy bằng vai trò của bên đề xuất (quản lý duyệt voucher 25% do tư vấn viên ra lệnh → vẫn thất bại
+vì hạn mức 15% của tư vấn viên). L2 vượt hạn mức ngày tự chuyển sang chờ duyệt. Chống trùng hai mức: khoá đề xuất và
+"mục này đã nằm trong đề xuất nào chưa".
 
-**4. Chống "bịa" có kiểm chứng, không chỉ dặn trong prompt:**
-- Nguồn trích dẫn được **đối chiếu với tài liệu thật trong pgvector**; nguồn không tồn tại bị loại.
-- Email chỉ gửi được tới **địa chỉ học viên có thật** – từng bắt được LLM gõ nhầm `nguyen.ngc.hieu190@…`.
-- Tool trả số **đã định dạng kiểu Việt Nam** (`4.800.000đ`): từng bắt được LLM tự đổi `4,800,000` thành `4.800.500`.
-- Eval đo *number faithfulness*: mọi số ≥ 4 chữ số trong câu trả lời phải có trong kết quả tool.
+**4. LLM quyết định ý định, code quyết định dữ liệu.** Agent nền lọc bằng SQL, tính bằng code; LLM chỉ viết đoạn
+lời văn (thư tư vấn, hỏi thăm, nhận xét báo cáo), có **bản mẫu dự phòng** và **kiểm tra không bịa số**
+([`background/base.py`](src/eduassist/background/base.py)).
 
-**5. Hybrid search** – model embedding nhỏ chạy local (FastEmbed, không gửi dữ liệu ra ngoài) bỏ lỡ từ khoá
-"trả góp"; ghép thêm full-text search của Postgres bằng Reciprocal Rank Fusion. Tài liệu cắt theo **mục** (`## heading`)
-để trích nguồn tới từng mục.
+**5. Outbox trong cùng transaction** + worker `SKIP LOCKED`: thay đổi dữ liệu, audit và sự kiện cùng commit hoặc
+cùng huỷ. Mỗi request API là một transaction.
 
-**6. Vòng học liên tục (data flywheel), không fine-tune** ([`learning.py`](src/eduassist/learning.py)):
-- Nhân viên bấm 👍 câu trả lời có SQL → cặp (câu hỏi, SQL) vào kho ví dụ → lần sau few-shot động lấy ra.
-  Chỉ nhận xác nhận từ nhân viên (chống "đầu độc").
-- Câu agent tư vấn không tìm thấy → bảng `knowledge_gap` → [báo cáo](scripts/feedback_report.py) để bổ sung tài liệu.
-- Bộ nhớ dài hạn theo người dùng (LangGraph Store): "con đang học lớp 9, muốn học tối".
-- Đo hiệu quả bằng eval **có / không** few-shot (bảng ở trên).
+**6. Đồng hồ nghiệp vụ** (`core.today()/now()`): mọi luật dùng ngày nghiệp vụ, nên mô phỏng 30 ngày chỉ là đặt lại
+đồng hồ trong một transaction rồi rollback.
 
-**7. Chịu lỗi & quan sát:** retry + model dự phòng (middleware), giới hạn số lần gọi tool, rate limit theo user,
-log JSON, Langfuse tracing tuỳ chọn (trace id = run id để 👍/👎 gắn đúng trace; có thể tự host vì trace chứa dữ liệu học viên).
+Kế thừa nguyên từ prototype: Text-to-SQL 4 lớp an toàn (nay đọc thêm 4 bảng mới), RAG hybrid có kiểm chứng nguồn,
+bộ nhớ dài hạn, vòng học lại từ 👍 của nhân viên, Langfuse tuỳ chọn.
+
+## Các agent nền
+
+| Agent | Kích hoạt | Làm gì | Mức mặc định |
+|---|---|---|---|
+| Công nợ | hằng ngày | Đánh dấu quá hạn; nhắc theo bậc: trước hạn 3 ngày → quá 1 → quá 7 ngày; quá 14 ngày đề xuất tạm dừng | Nhắc lần đầu L2 (≤100/ngày), lần sau L1, tạm dừng L1 |
+| Tuyển sinh | khách mới + hằng ngày | Chấm điểm khách (luật minh bạch), gợi ý lớp còn chỗ, soạn tin tư vấn; giao việc khi khách quá 3 ngày chưa liên hệ | Tin tư vấn L1, việc nhắc L2 |
+| Giáo vụ | hằng ngày + đổi lịch | Lớp thiếu sĩ số (≤14 ngày: cảnh báo; ≤7 ngày: gộp nếu có lớp cùng khoá, không thì huỷ); trùng GV/phòng | Cảnh báo L0, gộp/huỷ L1 |
+| Chăm sóc | điểm danh / nhập điểm | Vắng ≥2 buổi liên tiếp hoặc điểm giữa khoá < 50 → thư hỏi thăm + báo giảng viên | L1 |
+| Báo cáo | thứ Hai | Số liệu tuần, điểm bất thường (±30%), nhận xét AI có kiểm chứng số | L2 |
+
+Mức tự chủ đổi được ở trang **Agent & mức tự chủ** (chỉ quản lý); agent không tự đổi được.
 
 ## Chạy thử
 
-Cần: Docker, [uv](https://docs.astral.sh/uv/), Groq API key miễn phí (https://console.groq.com/keys).
+Cần: Docker, [uv](https://docs.astral.sh/uv/), Node 22, Groq API key miễn phí (https://console.groq.com/keys).
 
 ```bash
-cp .env.example .env            # điền GROQ_API_KEY, JWT_SECRET; CHAINLIT_AUTH_SECRET: uv run --group ui chainlit create-secret
+cp .env.example .env              # điền GROQ_API_KEY, JWT_SECRET
 ```
 
-**Cách 1 – toàn bộ bằng Docker**
+**Toàn bộ bằng Docker**
 ```bash
 docker compose --profile app up -d --build
-# UI http://localhost:8001 · API docs http://localhost:8000/docs · Email đã gửi http://localhost:8025
+# Web http://localhost:3000 · API http://localhost:8000/docs · Email đã gửi http://localhost:8025
 ```
 
-**Cách 2 – dev (code chạy trên máy)**
+**Dev**
 ```bash
 docker compose up -d db mailpit
 uv sync --all-groups
-uv run eduassist-setup                       # schema, role read-only, dữ liệu giả lập, vector
+uv run eduassist-setup                    # alembic upgrade head, role read-only, dữ liệu kịch bản, vector
 uv run uvicorn eduassist.api.main:app --reload --port 8000
-uv run --group ui chainlit run ui/app.py --port 8001
-uv run eduassist-chat --user nhanvien        # hoặc chat ngay trên terminal
+uv run eduassist-worker                   # agent nền (hoặc --once / --agent cong_no)
+cd web && npm install && npm run dev      # http://localhost:3000  (NEXT_PUBLIC_API_URL nếu API khác cổng 8000)
 ```
 
-Tài khoản demo (mật khẩu `demo123`): `hocvien` (học viên), `nhanvien` (nhân viên), `quanly` (quản lý).
+Tài khoản demo (mật khẩu `demo123`): `quanly`, `ketoan`, `tuvan`, `nhanvien`, `giaovu`, `giangvien`, `hocvien`.
+Trang đăng nhập có nút điền sẵn từng vai trò.
+
+Kịch bản demo nhanh: đăng nhập `quanly` → **Agent** → *Chạy ngay* agent công nợ → **Hộp duyệt** xem đề xuất tạm dừng
+học (căn cứ, số tiền do code tính) → *Duyệt* → **Nhật ký** thấy dòng "duyệt bởi quanly" → mở **Copilot**, gõ
+"Cấp voucher 10% cho học viên id 7" → duyệt ngay trên thẻ đề xuất trong chat.
 
 ## Kiểm thử & đánh giá
 
 ```bash
-uv run pytest                      # unit + API test, không cần LLM/DB
-uv run pytest -m integration       # cần Postgres: kiểm tra role agent_ro ở chính database
-uv run eduassist-eval all          # gọi LLM thật, kết quả ở evals/results/latest.md
-uv run eduassist-eval sql --no-examples --tag baseline   # đo khi tắt few-shot
+uv run pytest                          # 162 test: luật thuần, phân quyền, API (không cần DB/LLM)
+uv run pytest -m integration           # 40 test với Postgres thật, mỗi test rollback
+uv run eduassist-eval background       # mô phỏng 30 ngày cho agent nền (không gọi LLM, DB không đổi)
+uv run eduassist-eval all              # + các bộ eval LLM của prototype
+cd web && npm run build                # type-check + build giao diện
 ```
 
-| Bộ eval | Đo gì |
+**Mô phỏng 30 ngày (11/11–10/12/2026)** – mỗi ngày: học viên đóng tiền ngẫu nhiên (~6%/ngày), giảng viên điểm danh
+(5 học viên được cài sẵn bỏ học), khách mới đến; worker chạy; người duyệt giả lập duyệt mọi đề xuất. Đáp án mỗi ngày
+tính bằng SQL riêng từ dữ liệu, so với đề xuất agent tạo:
+
+| Chỉ số | Kết quả |
 |---|---|
-| `routing` | Supervisor giao đúng agent (1 lần gọi LLM / câu) |
-| `sql` | Execution accuracy: chạy SQL của agent và SQL đáp án, so sánh kết quả; số lần thử; số liệu có bị bịa không |
-| `rag` | Đúng dữ kiện, trích đúng mục tài liệu, từ chối đúng khi tài liệu không có |
-| `security` | Xoá/sửa dữ liệu, đọc bảng mật khẩu, `pg_sleep`, học viên đòi thông tin người khác, mạo danh quản lý |
+| Công nợ – ca cần xử lý / bỏ sót / đúng hạn / đề xuất sai | 226 ca · **0 bỏ sót** · 100% đúng ngày · 100% chính xác |
+| Chăm sóc – học viên vắng ≥2 buổi liên tiếp được hỏi thăm | 7/7 |
+| Giáo vụ – lớp thiếu sĩ số được cảnh báo / đề xuất | 3/3 |
+| Tuyển sinh – khách quá 3 ngày chưa liên hệ được giao việc | 17/17 |
+| Email trùng trong 24h · nhắc người đã đóng · lần chạy agent lỗi | **0 · 0 · 0** |
+
+Ghi chú trung thực: đáp án dùng cùng ngưỡng nghiệp vụ với agent (bậc −3/1/7/14 ngày), nên bộ này đo **đường ống**
+(lọc, chống trùng, mức tự chủ, thực thi, bỏ qua người đã đóng) chứ không đo "agent có hiểu chính sách không". Lần chạy
+đầu đạt 79,6% chính xác vì đáp án chỉ tính ngày *chạm đúng* bậc, quên ngày đầu agent phải bắt kịp các đợt đã quá hạn
+từ trước – đã sửa cách tính đáp án. Kiểm tra giao diện bắt được một lỗi thật: đợt đã đóng một nửa vẫn bị nhắc với số
+tiền gốc – đã sửa bằng view `dot_con_lai` dùng chung cho nhắc nợ, dashboard và báo cáo (có test hồi quy).
+
+Kết quả eval LLM của prototype (01/11/2026, `gpt-oss-120b`): điều phối 100% (16 câu), RAG 100% (12), Text-to-SQL
+86,7% → 93,3% khi có few-shot động (15), bảo mật chặn 7/7. Chưa chạy lại sau khi đổi schema/vai trò.
 
 ## Cấu trúc
 
 ```
 src/eduassist/
-  agents/       supervisor, advisor, analytics, action, context, persistence
-  security/     sql_guard (sqlglot), sql_runner (agent_ro), passwords
-  rag/          embeddings (FastEmbed), ingest (cắt theo mục), store (hybrid search, kho ví dụ SQL)
-  api/          FastAPI: auth JWT, SSE, rate limit
-  evals/        runner + hàm chấm điểm
-  chat.py       chuẩn hoá stream LangGraph -> step/token/interrupt/done (API, CLI, eval dùng chung)
-  learning.py   vòng học liên tục
-ui/app.py       Chainlit (client mỏng của API)
-sql/schema.sql  schema + COMMENT (agent đọc COMMENT để hiểu nghiệp vụ)
-data/           tài liệu chính sách, ví dụ SQL mẫu
-evals/          bộ câu hỏi + kết quả
+  services/    core (Actor, quyền, audit, outbox, đồng hồ), rules (luật thuần), crm, training, enrollment,
+               finance, students (+cổng học viên), notifications, proposals (hộp duyệt), actions, reports
+  background/  5 agent nền, khung chạy, worker (outbox + lịch)
+  agents/      supervisor + advisor/analytics/action (action tạo đề xuất qua tầng Service)
+  api/         main (chat SSE, auth), platform (REST nghiệp vụ)
+  evals/       eval LLM của prototype + background.py (mô phỏng N ngày)
+  seed/        dữ liệu giả lập gốc + platform.py (dữ liệu theo kịch bản)
+migrations/    Alembic: 0001 schema prototype · 0002 nền tảng · 0003 view dot_con_lai
+web/           Next.js: dashboard, hộp duyệt, tuyển sinh, lớp học, học viên, tài chính, yêu cầu, agent, nhật ký,
+               cổng học viên, Copilot
 ```
 
-## Giới hạn (nói thẳng)
+Thiết kế giao diện theo bộ skill `jakubkrehel/skills` (layout, typography, colors, UI, writing, accessibility):
+token màu OKLCH theo vai trò, tương phản đo bằng công thức (không ước lượng) – ghi trong `web/src/app/globals.css`;
+màu biểu đồ qua `validate_palette.js`; `:focus-visible`, dialog native `showModal()`, vùng `role="status"` cho toast,
+link bỏ qua tới nội dung, chuyển động chỉ khi không bật giảm chuyển động.
 
-- Dữ liệu giả lập, chưa có người dùng thật; kênh thật của học viên Việt Nam là Zalo/Messenger – webhook là bước tiếp theo.
-- Free tier Groq giới hạn ~8K token/phút → độ trễ phụ thuộc hạn mức; bộ eval nhỏ (16–15–12–7 câu), con số mang tính
-  định hướng, không phải benchmark.
-- Rate limit lưu trong RAM (1 instance); nhiều instance cần Redis.
-- Kết quả eval có dao động giữa các lần chạy do LLM; xem chi tiết từng câu trong `evals/results/*.json`.
+## Giới hạn và phần chưa làm so với đề xuất
+
+- **Chưa có:** kiểm thử tải 100 người dùng, thử nghiệm với 3–5 người dùng thật, mở rộng bộ eval LLM lên ~100 câu,
+  chế độ tối, đo "giảm thao tác thủ công". Eval LLM cũ chưa chạy lại sau khi đổi vai trò/schema.
+- Tầng Service dùng psycopg + SQL thuần (giữ nhất quán với code agent của prototype); Alembic quản lý migration nhưng
+  không dùng ORM SQLAlchemy như đề xuất ghi.
+- Seed xếp giảng viên/phòng theo kiểu tham lam nên ngoài cặp trùng lịch cài sẵn còn vài cặp trùng thật – agent giáo vụ
+  phát hiện đúng, nhưng dữ liệu nên được làm sạch hơn.
+- Cổng thanh toán, Zalo OA: ngoài phạm vi (như đề xuất). Rate limit trong RAM (1 instance).
+- Kiểm tra giao diện trên trình duyệt ở 1920px và 486px (không tràn ngang); chưa kiểm ở 320px, zoom 200% và bằng
+  trình đọc màn hình.

@@ -15,7 +15,7 @@ jobs:
           version: "0.11.33"
       - run: uv sync --frozen
       - name: Lint
-        run: uv run ruff check src tests scripts ui && uv run ruff format --check src tests scripts ui
+        run: uv run ruff check src tests scripts ui migrations && uv run ruff format --check src tests scripts ui migrations
       - name: Unit tests (không cần LLM / database)
         run: uv run pytest -q
 
@@ -41,5 +41,23 @@ jobs:
       - run: cp .env.example .env
       - name: Setup database (không tạo vector để chạy nhanh)
         run: uv run eduassist-setup --skip-ingest
-      - name: Integration tests
+      - name: Integration tests (luật nghiệp vụ, phân quyền, hộp duyệt, agent nền)
         run: uv run pytest -q -m integration
+      - name: Mô phỏng 30 ngày cho agent nền (không gọi LLM, rollback sau khi chạy)
+        run: uv run eduassist-eval background --days 30
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Type-check + build
+        run: npm run build

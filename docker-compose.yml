@@ -1,12 +1,14 @@
 # Dev (chạy code trên máy):  docker compose up -d db mailpit
 # Toàn bộ hệ thống:          docker compose --profile app up -d --build
-#   API  http://localhost:8000/docs   UI  http://localhost:8001   Mailpit  http://localhost:8025
+#   Web  http://localhost:3000   API  http://localhost:8000/docs   Mailpit  http://localhost:8025
+# Giao diện chat Chainlit của prototype (tuỳ chọn): docker compose --profile legacy up -d ui
 x-app-env: &app-env
   DATABASE_URL: postgresql://app_rw:${POSTGRES_PASSWORD:-app_rw_dev_pw}@db:5432/eduassist
   AGENT_RO_URL: postgresql://agent_ro:${AGENT_RO_PASSWORD:-agent_ro_dev_pw}@db:5432/eduassist
   AGENT_RO_PASSWORD: ${AGENT_RO_PASSWORD:-agent_ro_dev_pw}
   SMTP_HOST: mailpit
   SMTP_PORT: "1025"
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
 
 services:
   db:
@@ -60,8 +62,31 @@ services:
       setup:
         condition: service_completed_successfully
 
-  ui:
+  worker:
+    # Agent chạy nền: đọc outbox sự kiện + chạy theo lịch hằng ngày/tuần
     profiles: ["app"]
+    build: .
+    command: ["eduassist-worker"]
+    env_file: .env
+    environment: *app-env
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  web:
+    profiles: ["app"]
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  ui:
+    profiles: ["legacy"]
     build: .
     command: ["chainlit", "run", "ui/app.py", "--host", "0.0.0.0", "--port", "8001", "--headless"]
     env_file: .env

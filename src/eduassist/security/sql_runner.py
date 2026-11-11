@@ -11,7 +11,20 @@ from eduassist.db import ro_pool
 from eduassist.formatting import vn_number
 from eduassist.security.sql_guard import validate_and_limit
 
-AGENT_READABLE_TABLES = {"khoa_hoc", "lop_hoc", "hoc_vien", "don_hang", "thanh_toan", "voucher"}
+# Bảng nghiệp vụ agent phân tích được SELECT (dùng chung cho lớp kiểm tra sqlglot VÀ quyền GRANT của role agent_ro).
+# app_user, audit_log, de_xuat_agent, email_log... KHÔNG có ở đây.
+AGENT_READABLE_TABLES = {
+    "khoa_hoc",
+    "lop_hoc",
+    "hoc_vien",
+    "don_hang",
+    "thanh_toan",
+    "voucher",
+    "dot_thanh_toan",
+    "khach_tiem_nang",
+    "buoi_hoc",
+    "diem_danh",
+}
 MAX_ROWS_SHOWN_TO_LLM = 40
 
 

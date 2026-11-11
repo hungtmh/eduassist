@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,12 +33,23 @@ class Settings(BaseSettings):
     # Langfuse (tuỳ chọn)
     langfuse_public_key: str = ""
     langfuse_secret_key: SecretStr = SecretStr("")
-    langfuse_host: str = "https://cloud.langfuse.com"
+    # Nhận cả hai tên: SDK Langfuse và trang hướng dẫn của Langfuse dùng LANGFUSE_BASE_URL, bản cũ dùng LANGFUSE_HOST
+    langfuse_host: str = Field(
+        "https://cloud.langfuse.com", validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL")
+    )
 
     # Giới hạn an toàn cho agent
     sql_row_limit: int = 200
     sql_timeout_ms: int = 5000
     max_tool_calls_per_turn: int = 12
+
+    # Web (Next.js) gọi API từ trình duyệt -> cần CORS. Nhiều origin cách nhau bằng dấu phẩy.
+    cors_origins: str = "http://localhost:3000"
+
+    # Agent chạy nền
+    background_llm: bool = True  # False: chỉ dùng bản mẫu do code soạn (mô phỏng, đánh giá, khi hết hạn mức LLM)
+    worker_poll_seconds: int = 5
+    daily_run_hour: int = 7  # sau giờ này mỗi ngày, worker chạy các agent đến lịch
 
     @property
     def langfuse_enabled(self) -> bool:

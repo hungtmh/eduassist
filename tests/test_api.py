@@ -11,7 +11,7 @@ from eduassist.api.ratelimit import RateLimiter
 
 USERS = {
     "hocvien": AuthUser("hocvien", "student", "Học viên", 1),
-    "nhanvien": AuthUser("nhanvien", "staff", "Nhân viên", None),
+    "nhanvien": AuthUser("nhanvien", "consultant", "Nhân viên", None),
 }
 
 
@@ -95,7 +95,7 @@ def test_tampered_token_rejected(client):
 
 
 def test_me_returns_role_from_token(client):
-    assert client.get("/me", headers=login(client, "nhanvien")).json()["role"] == "staff"
+    assert client.get("/me", headers=login(client, "nhanvien")).json()["role"] == "consultant"
 
 
 def test_chat_streams_sse_events(client, backend):

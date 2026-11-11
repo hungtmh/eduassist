@@ -56,19 +56,25 @@ def test_runner_blocks_before_database():
         run_readonly("SELECT * FROM app_user")
 
 
-def test_payment_reminders_skip_recently_reminded_students():
-    from eduassist.agents.action import REMINDER_SUBJECT, find_debtors, reminder_targets
-    from eduassist.db import app_pool
+def test_reminders_skip_students_mailed_in_last_24h():
+    """Chống gửi trùng nằm ở tầng Service: LLM/agent gọi lại bao nhiêu lần, mỗi người chỉ nhận 1 email / 24 giờ."""
+    from psycopg.rows import dict_row
 
-    debtor = find_debtors()[0]
-    with app_pool().connection() as conn:
-        row = conn.execute(
-            "INSERT INTO email_log (recipients, subject, body, sent_by) VALUES (%s, %s, 'test', 'pytest') RETURNING id",
-            ([debtor["email"]], REMINDER_SUBJECT),
-        ).fetchone()
-    try:
-        targets, skipped = reminder_targets([debtor["id"]])
-        assert targets == [] and skipped == 1
-    finally:
-        with app_pool().connection() as conn:
-            conn.execute("DELETE FROM email_log WHERE id = %s", (row["id"],))
+    from eduassist.agents.action import find_debtors
+    from eduassist.services.core import Actor
+    from eduassist.services.notifications import capture_mail, recently_sent, send_student_emails
+
+    box = []
+    capture_mail(box)
+    with (
+        psycopg.connect(get_settings().database_url, row_factory=dict_row, autocommit=True) as conn,
+        conn.transaction(force_rollback=True),
+    ):
+        conn.execute("TRUNCATE email_log")  # rollback cuối test
+        hv = find_debtors(conn)[0]["hoc_vien_id"]
+        me = Actor("ketoan", "accountant")
+        first = send_student_emails(conn, me, "nhac_no", {hv: ("a", "b")})
+        again = send_student_emails(conn, me, "nhac_no", {hv: ("a", "b")})
+        assert first.sent == [hv] and again.sent == [] and again.skipped_recent == [hv]
+        assert recently_sent(conn, "nhac_no", [hv]) == {hv}
+    assert len(box) == 1

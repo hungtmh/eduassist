@@ -483,6 +483,10 @@ def generate(today: date, n_students: int = 420, seed: int = 42) -> Dataset:
 DEMO_USERS = [
     # username, password, role, tên hiển thị, hoc_vien_id
     ("hocvien", "demo123", "student", "Học viên demo", 1),
-    ("nhanvien", "demo123", "staff", "Nhân viên tư vấn demo", None),
+    ("tuvan", "demo123", "consultant", "Tư vấn viên Lan", None),
+    ("nhanvien", "demo123", "consultant", "Tư vấn viên Minh", None),
+    ("giaovu", "demo123", "academic", "Giáo vụ Hà", None),
+    ("ketoan", "demo123", "accountant", "Kế toán Phương", None),
+    ("giangvien", "demo123", "teacher", "Giảng viên demo", None),
     ("quanly", "demo123", "manager", "Quản lý demo", None),
 ]

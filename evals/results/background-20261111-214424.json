@@ -1,0 +1,27 @@
+{
+  "suite": "background",
+  "tag": "",
+  "model": "openai/gpt-oss-120b",
+  "date": "20261111-214424",
+  "n": 0,
+  "summary": {
+    "days": 30,
+    "debt_cases": 226,
+    "debt_recall": 1.0,
+    "debt_on_time": 1.0,
+    "debt_precision": 1.0,
+    "care_cases": 7,
+    "care_recall": 1.0,
+    "class_cases": 3,
+    "class_recall": 1.0,
+    "lead_cases": 17,
+    "lead_recall": 1.0,
+    "duplicate_emails_24h": 0,
+    "reminders_after_paid": 0,
+    "agent_run_errors": 0,
+    "emails_sent": 94,
+    "proposals": 126,
+    "auto_executed": 40
+  },
+  "rows": []
+}

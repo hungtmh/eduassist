@@ -6,12 +6,13 @@ nên người dùng không thể "tự nhận" là nhân viên bằng cách gõ 
 
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Literal
 
 from langgraph.config import get_stream_writer
 
-Role = Literal["student", "staff", "manager"]
-ROLE_LABEL = {"student": "học viên", "staff": "nhân viên", "manager": "quản lý"}
+from eduassist.services.core import ROLE_LABEL as _LABELS
+from eduassist.services.core import Actor, Role, has_perm
+
+ROLE_LABEL = {k: v.lower() for k, v in _LABELS.items()}
 
 
 @dataclass(frozen=True)
@@ -22,10 +23,16 @@ class UserContext:
     hoc_vien_id: int | None = None
     run_id: str = ""
     thread_id: str = ""
+    giang_vien_id: int | None = None
 
     @property
     def is_staff(self) -> bool:
-        return self.role in ("staff", "manager")
+        return self.role != "student"
+
+    @property
+    def can_use_data_agents(self) -> bool:
+        """Được dùng agent phân tích + vận hành (quyền chat.data trong tầng Service)."""
+        return has_perm(Actor(self.user_id, self.role), "chat.data")
 
 
 def emit(event_type: str, **data) -> None:

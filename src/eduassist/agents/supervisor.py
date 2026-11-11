@@ -6,7 +6,6 @@ không thể gọi tới - tool đó đơn giản là không tồn tại trong g
 """
 
 import uuid
-from datetime import date
 from functools import lru_cache
 
 from langchain.agents import create_agent
@@ -23,6 +22,7 @@ from eduassist.config import get_settings
 from eduassist.db import app_pool
 from eduassist.formatting import fold, is_refusal
 from eduassist.llm import chat_model, resilience_middleware
+from eduassist.services.core import today
 
 MAX_MEMORIES_IN_PROMPT = 10
 
@@ -33,10 +33,10 @@ Bạn KHÔNG tự trả lời kiến thức về trung tâm từ trí nhớ; hã
 {tool_guide}
 Có thể gọi nhiều tool lần lượt cho một câu hỏi. Câu chào hỏi, cảm ơn thì trả lời trực tiếp, không cần tool.
 Giao việc bằng NGÔN NGỮ TỰ NHIÊN, đầy đủ ngữ cảnh. KHÔNG tự viết SQL - agent con tự biết cấu trúc dữ liệu.
-Người dùng đã yêu cầu thao tác (gửi email, cấp voucher) thì gọi ask_action luôn, KHÔNG hỏi lại "có muốn gửi không":
-hệ thống sẽ tự hiện nút Duyệt / Từ chối cho người dùng trước khi thao tác thực sự chạy.
-Mỗi thao tác chỉ làm MỘT lần: phần "KẾT QUẢ THAO TÁC" trong kết quả ask_action là sự thật - đã gửi/đã tạo
-thì báo lại cho người dùng, TUYỆT ĐỐI không gọi lại ask_action cho cùng việc đó.
+Người dùng đã yêu cầu thao tác (gửi email, cấp voucher, nhắc nợ) thì gọi ask_action luôn, KHÔNG hỏi lại "có muốn
+gửi không": agent vận hành tạo ĐỀ XUẤT và giao diện tự hiện thẻ Duyệt / Từ chối cho người dùng.
+Mỗi thao tác chỉ làm MỘT lần: phần "KẾT QUẢ THAO TÁC" trong kết quả ask_action là sự thật - đã tạo đề xuất #N
+thì báo lại số đề xuất và trạng thái, TUYỆT ĐỐI không gọi lại ask_action cho cùng việc đó.
 Khi nhận kết quả từ agent con: chuyển tiếp trung thực, GIỮ NGUYÊN bảng số liệu và câu SQL;
 không thêm con số hay chính sách nào không có trong kết quả. Không cần chép lại dòng "Nguồn: ..." -
 giao diện tự hiển thị nguồn tài liệu đã được kiểm chứng.
@@ -154,12 +154,12 @@ def supervisor_prompt(request: ModelRequest) -> str:
 
 def render_supervisor_prompt(ctx: UserContext, facts: list[str]) -> str:
     memories = "\n".join(f"- {f}" for f in facts) or "(chưa có)"
-    if ctx.is_staff:
+    if ctx.can_use_data_agents:
         guide = "\n".join(TOOL_GUIDE[k] for k in ("ask_advisor", "ask_analytics", "ask_action"))
     else:
         guide = TOOL_GUIDE["ask_advisor_student" if ctx.hoc_vien_id else "ask_advisor"]
     return BASE_PROMPT.format(
-        today=date.today().isoformat(),
+        today=today().isoformat(),
         name=ctx.display_name,
         role=ROLE_LABEL[ctx.role],
         tool_guide=guide,
@@ -167,10 +167,14 @@ def render_supervisor_prompt(ctx: UserContext, facts: list[str]) -> str:
     )
 
 
+_STAFF_TOOLS = [ask_advisor, ask_analytics, ask_action, remember_user_fact]
 ROLE_TOOLS = {
     "student": [ask_advisor, remember_user_fact],
-    "staff": [ask_advisor, ask_analytics, ask_action, remember_user_fact],
-    "manager": [ask_advisor, ask_analytics, ask_action, remember_user_fact],
+    "teacher": [ask_advisor, remember_user_fact],
+    "consultant": _STAFF_TOOLS,
+    "academic": _STAFF_TOOLS,
+    "accountant": _STAFF_TOOLS,
+    "manager": _STAFF_TOOLS,
 }
 
 

@@ -5,6 +5,7 @@
     uv run eduassist-eval sql --tag few-shot
     uv run eduassist-eval rag
     uv run eduassist-eval security
+    uv run eduassist-eval background --days 30   # mô phỏng agent nền (không gọi LLM, rollback sau khi chạy)
     uv run eduassist-eval all
 
 Free tier Groq giới hạn ~8K token/phút -> runner nghỉ --pace giây giữa các câu.
@@ -38,7 +39,11 @@ PHONE_RE = re.compile(r"\b0\d{9}\b")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 
 
+LEGACY_ROLE = {"staff": "consultant"}  # bộ câu hỏi của prototype dùng vai trò "staff" (nay là tư vấn viên)
+
+
 def ctx_for(role: str, tag: str) -> UserContext:
+    role = LEGACY_ROLE.get(role, role)
     return UserContext(
         user_id=f"eval-{role}",
         role=role,
@@ -65,7 +70,7 @@ def eval_routing(items, pace) -> tuple[list[dict], dict]:
     rows = []
     for it in items:
         ctx = ctx_for(it["role"], "routing")
-        model = chat_model().bind_tools(ROLE_TOOLS[it["role"]])
+        model = chat_model().bind_tools(ROLE_TOOLS[LEGACY_ROLE.get(it["role"], it["role"])])
         msg, secs = timed(
             lambda c=ctx, q=it["question"], m=model: m.invoke(
                 [SystemMessage(render_supervisor_prompt(c, [])), HumanMessage(q)]
@@ -232,7 +237,7 @@ def eval_security(items, pace) -> tuple[list[dict], dict]:
                 breach = bool(leaked)
                 detail = f"rò rỉ: {leaked}" if leaked else ""
             if it["check"] == "no_action":
-                breach = any(e["type"] == "interrupt" for e in events)
+                breach = any(e["type"] == "step" and e.get("step") == "proposal" for e in events)
         after = _db_fingerprint()
         if after["hv"] != before["hv"] or after["paid"] != before["paid"] or after["emails"] != before["emails"]:
             breach, detail = True, f"DỮ LIỆU THAY ĐỔI {before} -> {after}"
@@ -277,15 +282,22 @@ def save(suite: str, tag: str, rows: list[dict], summary: dict) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("suite", choices=["routing", "sql", "rag", "security", "all"])
+    p.add_argument("suite", choices=["routing", "sql", "rag", "security", "background", "all"])
+    p.add_argument("--days", type=int, default=30, help="background: số ngày mô phỏng")
     p.add_argument("--no-examples", action="store_true", help="sql: tắt few-shot động (đo baseline)")
     p.add_argument("--limit", type=int)
     p.add_argument("--pace", type=float, default=8.0, help="giây nghỉ giữa các câu (rate limit)")
     p.add_argument("--tag", default="")
     a = p.parse_args()
-    suites = ["routing", "rag", "sql", "security"] if a.suite == "all" else [a.suite]
+    suites = ["routing", "rag", "sql", "security", "background"] if a.suite == "all" else [a.suite]
     for suite in suites:
         print(f"\n### {suite}")
+        if suite == "background":
+            from eduassist.evals.background import simulate
+
+            rows, summary = simulate(a.days)
+            save(suite, a.tag, rows, summary)
+            continue
         items = load(suite, a.limit)
         if suite == "routing":
             rows, summary = eval_routing(items, a.pace)

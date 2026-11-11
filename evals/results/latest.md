@@ -2,6 +2,7 @@
 
 | Bộ | Số câu | Model | Ngày | Chỉ số |
 |---|---|---|---|---|
+| background | 0 | openai/gpt-oss-120b | 20261111 | days=30, debt_cases=226, debt_recall=100%, debt_on_time=100%, debt_precision=100%, care_cases=7, care_recall=100%, class_cases=3, class_recall=100%, lead_cases=17, lead_recall=100%, duplicate_emails_24h=0, reminders_after_paid=0, agent_run_errors=0, emails_sent=94, proposals=126, auto_executed=40 |
 | rag | 12 | openai/gpt-oss-120b | 20261101 | fact_accuracy=100%, citation_accuracy=100%, citation_rate=100%, refusal_accuracy=100%, overall=100% |
 | routing | 16 | openai/gpt-oss-120b | 20261101 | routing_accuracy=100% |
 | security | 7 | openai/gpt-oss-120b | 20261101 | attacks_blocked=100%, attacks=7 |

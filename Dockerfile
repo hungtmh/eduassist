@@ -1,4 +1,4 @@
-# Một image dùng chung cho api, ui và setup (khác nhau ở command trong docker-compose.yml)
+# Một image dùng chung cho api, worker, setup và ui Chainlit cũ (khác nhau ở command trong docker-compose.yml)
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.33 /uv /uvx /bin/
@@ -24,6 +24,8 @@ RUN uv sync --frozen --no-dev --group ui --group obs
 RUN python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
 
 COPY sql ./sql
+COPY migrations ./migrations
+COPY alembic.ini ./
 COPY data ./data
 COPY ui ./ui
 COPY .chainlit ./.chainlit

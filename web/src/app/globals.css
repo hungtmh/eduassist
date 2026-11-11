@@ -1,0 +1,202 @@
+@import "tailwindcss";
+
+/*
+  Token màu: primitive (theo sắc độ) -> semantic (theo vai trò). Component CHỈ dùng semantic.
+  OKLCH: L là độ sáng cảm nhận. Tương phản đo bằng chuyển OKLCH -> sRGB (WCAG 2.x):
+    fg/surface 17.3   fg-secondary/surface 7.43   fg-tertiary/surface 5.27, /surface-muted 4.84
+    trắng/accent-solid 5.81   accent-fg/accent-subtle 7.27   trắng/danger-solid 5.82
+    success 6.71 · warning 6.37 · danger 6.96 · agent 7.15 (chữ trên nền subtle cùng màu)
+    control-border/surface 3.36 (viền ô nhập, WCAG 1.4.11)   line/line-strong chỉ để phân nhóm, không mang nghĩa
+*/
+:root {
+  color-scheme: light;
+
+  /* primitives - neutral (lạnh nhẹ, hue 255) */
+  --neutral-0: oklch(1 0 0);
+  --neutral-25: oklch(0.985 0.003 255);
+  --neutral-50: oklch(0.97 0.005 255);
+  --neutral-100: oklch(0.945 0.007 255);
+  --neutral-200: oklch(0.91 0.009 255);
+  --neutral-300: oklch(0.85 0.012 255);
+  --neutral-400: oklch(0.64 0.014 255);
+  --neutral-500: oklch(0.53 0.018 255);
+  --neutral-600: oklch(0.45 0.02 255);
+  --neutral-900: oklch(0.22 0.02 255);
+  /* primitives - teal (accent, hue 195) */
+  --teal-50: oklch(0.97 0.02 195);
+  --teal-100: oklch(0.93 0.04 195);
+  --teal-600: oklch(0.49 0.1 195);
+  --teal-700: oklch(0.42 0.09 195);
+  /* primitives - trạng thái */
+  --green-50: oklch(0.965 0.03 155);
+  --green-700: oklch(0.44 0.11 155);
+  --amber-50: oklch(0.97 0.04 80);
+  --amber-700: oklch(0.47 0.11 65);
+  --red-50: oklch(0.965 0.02 25);
+  --red-600: oklch(0.53 0.19 27);
+  --red-700: oklch(0.46 0.17 27);
+  --violet-50: oklch(0.965 0.02 295);
+  --violet-700: oklch(0.45 0.15 295);
+}
+
+@theme inline {
+  --font-sans: var(--font-be-vietnam), ui-sans-serif, system-ui, sans-serif;
+
+  --color-canvas: var(--neutral-25);
+  --color-surface: var(--neutral-0);
+  --color-surface-muted: var(--neutral-50);
+  --color-surface-hover: var(--neutral-100);
+  --color-line: var(--neutral-200);
+  --color-line-strong: var(--neutral-300);
+  --color-control-border: var(--neutral-400);
+  --color-fg: var(--neutral-900);
+  --color-fg-secondary: var(--neutral-600);
+  --color-fg-tertiary: var(--neutral-500);
+
+  --color-accent-subtle: var(--teal-50);
+  --color-accent-muted: var(--teal-100);
+  --color-accent-solid: var(--teal-600);
+  --color-accent-solid-hover: var(--teal-700);
+  --color-accent-fg: var(--teal-700);
+
+  --color-success-subtle: var(--green-50);
+  --color-success-fg: var(--green-700);
+  --color-warning-subtle: var(--amber-50);
+  --color-warning-fg: var(--amber-700);
+  --color-danger-subtle: var(--red-50);
+  --color-danger-solid: var(--red-600);
+  --color-danger-solid-hover: var(--red-700);
+  --color-danger-fg: var(--red-700);
+  /* "AI / agent" là một nghĩa riêng: chỉ dùng cho nội dung do agent tạo */
+  --color-agent-subtle: var(--violet-50);
+  --color-agent-fg: var(--violet-700);
+
+  --color-focus: var(--teal-600);
+  /* Màu dữ liệu biểu đồ (slot 1 của bảng màu dataviz, đã chạy validate_palette.js: PASS) */
+  --color-chart-1: #2a78d6;
+  --color-chart-grid: var(--neutral-200);
+
+  --shadow-card: 0 0 0 1px oklch(0.22 0.02 255 / 0.06), 0 1px 2px oklch(0.22 0.02 255 / 0.05);
+  --shadow-pop: 0 0 0 1px oklch(0.22 0.02 255 / 0.08), 0 8px 24px -4px oklch(0.22 0.02 255 / 0.14);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-padding-block-start: 4rem;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Bấm nút: co về 0.96 trong 150ms - chỉ khi người dùng không tắt chuyển động */
+@media (prefers-reduced-motion: no-preference) {
+  .pressable {
+    transition-property: scale, background-color, color, box-shadow;
+    transition-duration: 150ms;
+    transition-timing-function: ease-out;
+  }
+  .pressable:not(:disabled):active {
+    scale: 0.96;
+  }
+  .fade-in {
+    animation: fade-in 300ms ease-out both;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fade-in {
+    animation: fade-only 150ms ease-out both;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    translate: 0 12px;
+    filter: blur(4px);
+  }
+}
+@keyframes fade-only {
+  from {
+    opacity: 0;
+  }
+}
+
+dialog::backdrop {
+  background: oklch(0.22 0.02 255 / 0.4);
+}
+dialog {
+  overscroll-behavior: contain;
+}
+
+/* Nội dung Markdown của Copilot */
+.prose-chat {
+  line-height: 1.55;
+}
+.prose-chat > * + * {
+  margin-block-start: 0.6em;
+}
+.prose-chat ul,
+.prose-chat ol {
+  padding-inline-start: 1.25em;
+  list-style: disc;
+}
+.prose-chat ol {
+  list-style: decimal;
+}
+.prose-chat strong {
+  font-weight: 600;
+}
+.prose-chat a {
+  color: var(--color-accent-fg);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-chat table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8125rem;
+}
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid var(--color-line);
+  padding: 0.25rem 0.5rem;
+  text-align: start;
+  white-space: nowrap;
+}
+.prose-chat th {
+  background: var(--color-surface-muted);
+  font-weight: 600;
+}
+.prose-chat pre {
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: var(--color-surface-muted);
+  padding: 0.6rem 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+.prose-chat code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+}

@@ -4,7 +4,6 @@ Dữ liệu khoá học lấy bằng truy vấn THAM SỐ HOÁ do code viết s�
 agent tư vấn phục vụ cả học viên nên chỉ được đọc đúng những gì cần cho tư vấn.
 """
 
-from datetime import date
 from typing import Literal
 
 from langchain.agents import create_agent
@@ -17,6 +16,7 @@ from eduassist.db import app_pool
 from eduassist.formatting import vnd
 from eduassist.llm import chat_model, resilience_middleware
 from eduassist.rag.store import search_policies
+from eduassist.services.core import today
 
 DanhMuc = Literal["Tiếng Anh", "Tin học văn phòng", "Lập trình", "Phân tích dữ liệu", "Kỹ năng mềm"]
 TrinhDo = Literal["Cơ bản", "Trung cấp", "Nâng cao"]
@@ -70,7 +70,8 @@ def find_courses(
                        'ma_lop', lh.ma_lop, 'khai_giang', lh.ngay_khai_giang, 'ca', lh.ca_hoc,
                        'lich', lh.lich_hoc, 'hinh_thuc', lh.hinh_thuc,
                        'cho_trong', lh.si_so_toi_da - (SELECT count(*) FROM don_hang d
-                                                       WHERE d.lop_hoc_id = lh.id AND d.trang_thai <> 'da_huy'))
+                           WHERE d.lop_hoc_id = lh.id
+                             AND d.trang_thai_hoc IN ('cho_thanh_toan', 'dang_hoc', 'tam_dung')))
                        ORDER BY lh.ngay_khai_giang) FILTER (WHERE lh.id IS NOT NULL), '[]') AS lop
             FROM khoa_hoc kh
             LEFT JOIN lop_hoc lh ON lh.khoa_hoc_id = kh.id AND lh.trang_thai = 'sap_khai_giang'
@@ -138,7 +139,7 @@ def build_advisor_agent(for_student: bool):
 
     @dynamic_prompt
     def advisor_prompt(request: ModelRequest) -> str:
-        return PROMPT.format(today=date.today().isoformat(), extra_tools=extra)
+        return PROMPT.format(today=today().isoformat(), extra_tools=extra)
 
     return create_agent(
         chat_model(),

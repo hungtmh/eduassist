@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.20.1",
     "fastapi>=0.162.0",
     "fastembed>=0.9.1",
     "httpx>=0.28.1",
@@ -20,6 +21,7 @@ dependencies = [
     "psycopg[binary,pool]>=3.3.6",
     "pydantic-settings>=2.16.2",
     "pyjwt>=2.15.1",
+    "sqlalchemy>=2.1.8",
     "sqlglot>=30.27.0",
     "uvicorn[standard]>=0.54.0",
 ]
@@ -28,6 +30,7 @@ dependencies = [
 eduassist-setup = "eduassist.scripts.setup:main"
 eduassist-chat = "eduassist.cli:main"
 eduassist-eval = "eduassist.evals.run:main"
+eduassist-worker = "eduassist.background.runner:main"
 
 [tool.ruff]
 line-length = 120
@@ -36,6 +39,15 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
 ignore = ["E741"]
+
+[tool.ruff.lint.per-file-ignores]
+# Chuỗi SQL và văn bản tiếng Việt (email mẫu, mô tả luật) - cắt dòng giữa câu làm khó đọc và khó tìm kiếm
+"src/eduassist/services/*" = ["E501"]
+"src/eduassist/background/*" = ["E501"]
+"src/eduassist/seed/*" = ["E501"]
+"src/eduassist/evals/*" = ["E501"]
+"src/eduassist/api/platform.py" = ["E501"]
+"tests/*" = ["E501"]
 
 [tool.ruff.lint.flake8-bugbear]
 # Depends() trong tham số mặc định là cách dùng chuẩn của FastAPI

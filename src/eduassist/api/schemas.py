@@ -12,7 +12,7 @@ class LoginRequest(BaseModel):
 
 class UserInfo(BaseModel):
     username: str
-    role: Literal["student", "staff", "manager"]
+    role: Literal["student", "consultant", "academic", "accountant", "teacher", "manager"]
     display_name: str
 
 

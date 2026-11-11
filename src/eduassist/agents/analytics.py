@@ -4,7 +4,6 @@ Lớp (4) của Text-to-SQL nằm ở đây: SQL bị từ chối / lỗi -> tr�
 tối đa vài lần (ToolCallLimitMiddleware) để không lặp vô tận.
 """
 
-from datetime import date
 from functools import lru_cache
 
 import psycopg
@@ -19,6 +18,7 @@ from eduassist.llm import chat_model, resilience_middleware
 from eduassist.rag.store import similar_sql_examples
 from eduassist.security.sql_guard import SQLRejected
 from eduassist.security.sql_runner import AGENT_READABLE_TABLES, run_readonly
+from eduassist.services.core import today
 
 MAX_SQL_ATTEMPTS = 4
 
@@ -33,7 +33,9 @@ QUY TẮC NGHIỆP VỤ:
 - Doanh thu / tiền đã thu = SUM(thanh_toan.so_tien), hoàn tiền là số âm. KHÔNG tính doanh thu bằng don_hang.thanh_tien.
 - Công nợ của một đơn = don_hang.thanh_tien - tổng thanh_toan.so_tien của đơn đó,
   chỉ xét đơn có trang_thai IN ('chua_thanh_toan', 'thanh_toan_mot_phan').
-- Đếm lượt đăng ký / học viên đang học thì loại đơn trang_thai = 'da_huy', trừ khi câu hỏi nói khác.
+- Đếm lượt đăng ký thì loại đơn trang_thai = 'da_huy', trừ khi câu hỏi nói khác.
+- Học viên ĐANG HỌC = don_hang.trang_thai_hoc = 'dang_hoc'. Nợ QUÁ HẠN = dot_thanh_toan.trang_thai = 'qua_han'.
+- Chuyên cần: diem_danh nối buoi_hoc; 'di_tre' tính nửa buổi. Khách tiềm năng / tỉ lệ chuyển đổi: khach_tiem_nang.
 - Tìm theo tên người/khoá học dùng ILIKE '%...%'.
 
 CÁCH LÀM:
@@ -107,7 +109,7 @@ def run_sql(query: str, runtime: ToolRuntime[UserContext]) -> str:
 @dynamic_prompt
 def analytics_prompt(request: ModelRequest) -> str:
     # Tính lại mỗi lần gọi để "hôm nay" luôn đúng dù server chạy qua nhiều ngày
-    return PROMPT.format(schema=schema_description(), today=date.today().isoformat())
+    return PROMPT.format(schema=schema_description(), today=today().isoformat())
 
 
 def build_analytics_agent():

@@ -14,10 +14,12 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from eduassist.agents.context import UserContext
 from eduassist.api.auth import AuthUser, authenticate, create_token, current_user
+from eduassist.api.platform import router as platform_router
 from eduassist.api.ratelimit import RateLimiter
 from eduassist.api.schemas import (
     ChatRequest,
@@ -29,6 +31,7 @@ from eduassist.api.schemas import (
     UserInfo,
 )
 from eduassist.config import get_settings
+from eduassist.services.core import ServiceError
 
 
 class JsonFormatter(logging.Formatter):
@@ -92,6 +95,7 @@ def user_context(user: AuthUser, conversation_id: str, run_id: str | None = None
         hoc_vien_id=user.hoc_vien_id,
         run_id=run_id or str(uuid.uuid4()),
         thread_id=f"{user.username}:{conversation_id}",
+        giang_vien_id=user.giang_vien_id,
     )
 
 
@@ -105,7 +109,19 @@ def sse(events: Iterator[dict], meta: dict) -> StreamingResponse:
 
 
 # ---------- App ----------
-app = FastAPI(title="EduAssist API", version="0.1.0", description="Trợ lý AI multi-agent cho trung tâm đào tạo")
+app = FastAPI(
+    title="EduAssist Platform API",
+    version="1.0.0",
+    description="Nền tảng quản lý trung tâm đào tạo tích hợp hệ đa tác tử AI: REST nghiệp vụ + chat SSE",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(platform_router)
 
 
 @app.middleware("http")
@@ -124,6 +140,12 @@ async def access_log(request: Request, call_next):
         },
     )
     return response
+
+
+@app.exception_handler(ServiceError)
+async def service_error(request: Request, exc: ServiceError):
+    # Lỗi nghiệp vụ (vi phạm luật, thiếu quyền...) -> thông điệp tiếng Việt hiện thẳng cho người dùng
+    return JSONResponse({"detail": exc.message}, status_code=exc.status)
 
 
 @app.exception_handler(Exception)
