@@ -12,7 +12,7 @@ và **agent AI tham gia vận hành**: tự phát hiện việc cần làm, so�
 
 ## Khác gì so với prototype
 
-Prototype (nhánh `main`) là một chatbot Chainlit. Đồ án biến nó thành nền tảng nghiệp vụ:
+Prototype (tag `prototype`) là một chatbot Chainlit. Đồ án biến nó thành nền tảng nghiệp vụ:
 
 | Prototype | Nền tảng (bản này) |
 |---|---|
