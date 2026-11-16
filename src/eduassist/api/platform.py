@@ -8,11 +8,13 @@ from collections.abc import Iterator
 from datetime import date, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 
-from eduassist.api.auth import AuthUser, current_user
+from eduassist.api.auth import AuthUser, current_user, current_user_any
+from eduassist.api.fastjson import FastJSONRoute
 from eduassist.services import (
+    accounts,
     crm,
     enrollment,
     finance,
@@ -21,16 +23,33 @@ from eduassist.services import (
     reports,
     students,
     training,
+    workday,
 )
-from eduassist.services.core import PERMISSIONS, ROLE_LABEL, Actor, NotFound, require
+from eduassist.services.core import PERMISSIONS, ROLE_LABEL, Actor, NotFound, Page, paginate, require
 
-router = APIRouter()
+router = APIRouter(route_class=FastJSONRoute)
 
 
 def db() -> Iterator:
+    from eduassist import cache
     from eduassist.db import app_pool
 
-    with app_pool().connection() as conn, conn.transaction():
+    with app_pool().connection() as conn:
+        try:
+            with conn.transaction():
+                yield conn
+        except BaseException:
+            cache.discard_pending(conn)
+            raise
+        # Đã commit: giờ mới xoá cache tài khoản vừa đổi (xem cache.account_changed)
+        cache.flush_after_commit(conn)
+
+
+def read_db() -> Iterator:
+    """Kết nối chỉ đọc cho trang công khai / báo cáo: bản sao đọc nếu có DATABASE_READ_URL, không thì DB chính."""
+    from eduassist.db import read_pool
+
+    with read_pool().connection() as conn:
         yield conn
 
 
@@ -38,10 +57,21 @@ def actor(user: AuthUser = Depends(current_user)) -> Actor:
     return user.actor()
 
 
+# Phân trang: ?limit=&offset=, tổng số dòng trả trong header X-Total-Count (body vẫn là danh sách)
+Limit = Query(default=100, ge=1, le=500)
+Offset = Query(default=0, ge=0)
+
+
+def paged(response: Response, page: Page) -> Page:
+    response.headers["X-Total-Count"] = str(page.total)
+    return page
+
+
 # ---------------------------------------------------------------- tài khoản
 @router.get("/me/profile", tags=["tài khoản"])
-def profile(user: AuthUser = Depends(current_user)):
+def profile(user: AuthUser = Depends(current_user_any)):
     return {
+        "must_change_password": user.must_change_password,
         "username": user.username,
         "role": user.role,
         "role_label": ROLE_LABEL[user.role],
@@ -50,6 +80,24 @@ def profile(user: AuthUser = Depends(current_user)):
         "giang_vien_id": user.giang_vien_id,
         "permissions": sorted(PERMISSIONS[user.role]),
     }
+
+
+@router.get("/me/today", tags=["tài khoản"])
+def my_day(conn=Depends(db), me: Actor = Depends(actor)):
+    return workday.my_day(conn, me)
+
+
+@router.get("/schedule", tags=["đào tạo"])
+def schedule(
+    tu: date,
+    den: date,
+    giang_vien_id: int | None = None,
+    phong_hoc_id: int | None = None,
+    lop_hoc_id: int | None = None,
+    conn=Depends(db),
+    me: Actor = Depends(actor),
+):
+    return workday.schedule(conn, me, tu, den, giang_vien_id, phong_hoc_id, lop_hoc_id)
 
 
 @router.get("/notifications", tags=["thông báo"])
@@ -67,9 +115,23 @@ def read_notifications(body: IdsBody, conn=Depends(db), me: Actor = Depends(acto
     return {"ok": True}
 
 
+DASHBOARD_TTL = 60
+
+
 @router.get("/dashboard", tags=["báo cáo"])
-def dashboard(conn=Depends(db), me: Actor = Depends(actor)):
-    return reports.dashboard(conn, me)
+def dashboard(me: Actor = Depends(actor)):
+    """Bản tin của quản lý giống nhau cho mọi người xem, gồm các phép cộng trên bảng lớn (điểm danh 28 ngày, công nợ):
+    cache chung 60 giây. Trúng cache thì không mượn kết nối DB."""
+    from eduassist import cache
+    from eduassist.db import app_pool
+
+    require(me, "report.read")
+
+    def load():
+        with app_pool().connection() as conn:
+            return reports.dashboard(conn, me)
+
+    return cache.cached_json("dashboard", DASHBOARD_TTL, load)
 
 
 # ---------------------------------------------------------------- tuyển sinh
@@ -105,13 +167,21 @@ class ConvertIn(BaseModel):
 
 @router.get("/leads", tags=["tuyển sinh"])
 def list_leads(
+    response: Response,
     trang_thai: str | None = None,
     phu_trach: str | None = None,
     q: str | None = None,
+    limit: int = Limit,
+    offset: int = Offset,
     conn=Depends(db),
     me: Actor = Depends(actor),
 ):
-    return crm.list_leads(conn, me, trang_thai, phu_trach, q)
+    return paged(response, crm.list_leads(conn, me, trang_thai, phu_trach, q, limit, offset))
+
+
+@router.get("/leads/counts", tags=["tuyển sinh"])
+def lead_counts(conn=Depends(db), me: Actor = Depends(actor)):
+    return crm.lead_counts(conn, me)
 
 
 @router.post("/leads", tags=["tuyển sinh"], status_code=201)
@@ -145,8 +215,16 @@ def convert(lead_id: int, body: ConvertIn, conn=Depends(db), me: Actor = Depends
 
 
 @router.get("/tasks", tags=["tuyển sinh"])
-def list_tasks(mine: bool = True, trang_thai: str = "mo", conn=Depends(db), me: Actor = Depends(actor)):
-    return crm.list_tasks(conn, me, mine, trang_thai)
+def list_tasks(
+    response: Response,
+    mine: bool = True,
+    trang_thai: str = "mo",
+    limit: int = Limit,
+    offset: int = Offset,
+    conn=Depends(db),
+    me: Actor = Depends(actor),
+):
+    return paged(response, crm.list_tasks(conn, me, mine, trang_thai, limit, offset))
 
 
 @router.post("/tasks/{task_id}/done", tags=["tuyển sinh"])
@@ -191,20 +269,72 @@ class AttendanceIn(BaseModel):
     entries: list[AttendanceEntry] = Field(min_length=1, max_length=80)
 
 
+class CourseIn(BaseModel):
+    ma: str = Field(min_length=2, max_length=20)
+    ten: str = Field(min_length=3, max_length=150)
+    danh_muc: str
+    trinh_do: str
+    hoc_phi: int
+    so_buoi: int
+    mo_ta: str = Field(min_length=10, max_length=4000)
+    dang_mo_ban: bool = True
+    slug: str | None = Field(default=None, max_length=80)
+    mo_ta_ngan: str | None = Field(default=None, max_length=200)
+    doi_tuong: str | None = Field(default=None, max_length=500)
+    ket_qua: str | None = Field(default=None, max_length=500)
+    lo_trinh: list[dict] | None = None
+
+
+class CoursePatch(BaseModel):
+    ten: str | None = Field(default=None, min_length=3, max_length=150)
+    danh_muc: str | None = None
+    trinh_do: str | None = None
+    hoc_phi: int | None = None
+    so_buoi: int | None = None
+    mo_ta: str | None = Field(default=None, min_length=10, max_length=4000)
+    dang_mo_ban: bool | None = None
+    slug: str | None = Field(default=None, max_length=80)
+    mo_ta_ngan: str | None = Field(default=None, max_length=200)
+    doi_tuong: str | None = Field(default=None, max_length=500)
+    ket_qua: str | None = Field(default=None, max_length=500)
+    lo_trinh: list[dict] | None = None
+
+
 @router.get("/courses", tags=["đào tạo"])
-def courses(conn=Depends(db), me: Actor = Depends(actor)):
-    return training.list_courses(conn, me)
+def courses(dang_ban: bool = False, conn=Depends(db), me: Actor = Depends(actor)):
+    return training.list_courses(conn, me, dang_ban)
+
+
+@router.get("/courses/options", tags=["đào tạo"])
+def course_options(me: Actor = Depends(actor)):
+    return {"danh_muc": training.COURSE_CATEGORIES, "trinh_do": training.COURSE_LEVELS}
+
+
+@router.post("/courses", tags=["đào tạo"], status_code=201)
+def create_course(body: CourseIn, conn=Depends(db), me: Actor = Depends(actor)):
+    return training.create_course(conn, me, body.model_dump(exclude_none=True))
+
+
+@router.patch("/courses/{course_id}", tags=["đào tạo"])
+def update_course(course_id: int, body: CoursePatch, conn=Depends(db), me: Actor = Depends(actor)):
+    return training.update_course(conn, me, course_id, body.model_dump(exclude_none=True))
 
 
 @router.get("/classes", tags=["đào tạo"])
 def classes(
+    response: Response,
     trang_thai: str | None = None,
     khoa_hoc_id: int | None = None,
     q: str | None = None,
+    con_mo: bool = False,
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Offset,
     conn=Depends(db),
     me: Actor = Depends(actor),
 ):
-    return training.list_classes(conn, me, trang_thai, khoa_hoc_id, q)
+    """con_mo=true: chỉ lớp đang học / sắp khai giảng. Có limit: phân trang, tổng ở header X-Total-Count."""
+    rows = training.list_classes(conn, me, trang_thai, khoa_hoc_id, q, con_mo, limit, offset)
+    return paged(response, rows) if limit is not None else rows
 
 
 @router.post("/classes", tags=["đào tạo"], status_code=201)
@@ -240,6 +370,64 @@ def teachers(conn=Depends(db), me: Actor = Depends(actor)):
 @router.get("/rooms", tags=["đào tạo"])
 def rooms(conn=Depends(db), me: Actor = Depends(actor)):
     return training.list_rooms(conn, me)
+
+
+class BranchIn(BaseModel):
+    ten: str = Field(min_length=2, max_length=100)
+    dia_chi: str = Field(min_length=5, max_length=300)
+
+
+class RoomIn(BaseModel):
+    co_so_id: int
+    ten: str = Field(min_length=1, max_length=50)
+    suc_chua: int
+
+
+class TeacherIn(BaseModel):
+    ho_ten: str = Field(min_length=2, max_length=100)
+    email: str = Field(min_length=5, max_length=254)
+    chuyen_mon: str = Field(min_length=2, max_length=200)
+    tieu_su: str | None = Field(default=None, max_length=1000)
+    hien_thi_cong_khai: bool = True
+
+
+@router.get("/branches", tags=["đào tạo"])
+def branches(conn=Depends(db), me: Actor = Depends(actor)):
+    return training.list_branches(conn, me)
+
+
+@router.post("/branches", tags=["đào tạo"], status_code=201)
+def create_branch(body: BranchIn, conn=Depends(db), me: Actor = Depends(actor)):
+    return training.save_branch(conn, me, None, body.ten, body.dia_chi)
+
+
+@router.put("/branches/{branch_id}", tags=["đào tạo"])
+def update_branch(branch_id: int, body: BranchIn, conn=Depends(db), me: Actor = Depends(actor)):
+    return training.save_branch(conn, me, branch_id, body.ten, body.dia_chi)
+
+
+@router.post("/rooms", tags=["đào tạo"], status_code=201)
+def create_room(body: RoomIn, conn=Depends(db), me: Actor = Depends(actor)):
+    return training.save_room(conn, me, None, body.co_so_id, body.ten, body.suc_chua)
+
+
+@router.put("/rooms/{room_id}", tags=["đào tạo"])
+def update_room(room_id: int, body: RoomIn, conn=Depends(db), me: Actor = Depends(actor)):
+    return training.save_room(conn, me, room_id, body.co_so_id, body.ten, body.suc_chua)
+
+
+@router.post("/teachers", tags=["đào tạo"], status_code=201)
+def create_teacher(body: TeacherIn, conn=Depends(db), me: Actor = Depends(actor)):
+    return training.save_teacher(
+        conn, me, None, body.ho_ten, body.email, body.chuyen_mon, body.tieu_su, body.hien_thi_cong_khai
+    )
+
+
+@router.put("/teachers/{teacher_id}", tags=["đào tạo"])
+def update_teacher(teacher_id: int, body: TeacherIn, conn=Depends(db), me: Actor = Depends(actor)):
+    return training.save_teacher(
+        conn, me, teacher_id, body.ho_ten, body.email, body.chuyen_mon, body.tieu_su, body.hien_thi_cong_khai
+    )
 
 
 @router.get("/sessions/{session_id}", tags=["học vụ"])
@@ -280,8 +468,29 @@ class GradeIn(BaseModel):
 
 
 @router.get("/students", tags=["học vụ"])
-def list_students(q: str | None = None, conn=Depends(db), me: Actor = Depends(actor)):
-    return students.list_students(conn, me, q)
+def list_students(
+    response: Response,
+    q: str | None = None,
+    limit: int = Limit,
+    offset: int = Offset,
+    conn=Depends(db),
+    me: Actor = Depends(actor),
+):
+    return paged(response, students.list_students(conn, me, q, limit, offset))
+
+
+class StudentAccountIn(BaseModel):
+    gui_email: bool = True
+
+
+@router.get("/students/{student_id}/account", tags=["tài khoản"])
+def student_account(student_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+    return {"account": accounts.student_account(conn, me, student_id)}
+
+
+@router.post("/students/{student_id}/account", tags=["tài khoản"], status_code=201)
+def create_student_account(student_id: int, body: StudentAccountIn, conn=Depends(db), me: Actor = Depends(actor)):
+    return accounts.create_student_account(conn, me, student_id, body.gui_email)
 
 
 @router.get("/students/{student_id}", tags=["học vụ"])
@@ -347,13 +556,16 @@ class VoucherIn(BaseModel):
 
 @router.get("/invoices", tags=["tài chính"])
 def invoices(
+    response: Response,
     trang_thai: str | None = None,
     q: str | None = None,
     qua_han: bool = False,
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Offset,
     conn=Depends(db),
     me: Actor = Depends(actor),
 ):
-    return finance.list_invoices(conn, me, trang_thai, q, qua_han)
+    return paged(response, finance.list_invoices(conn, me, trang_thai, q, qua_han, limit, offset))
 
 
 @router.get("/invoices/summary", tags=["tài chính"])
@@ -412,8 +624,15 @@ def submit_request(body: RequestIn, conn=Depends(db), me: Actor = Depends(actor)
 
 
 @router.get("/requests", tags=["cổng học viên"])
-def requests(trang_thai: str | None = None, conn=Depends(db), me: Actor = Depends(actor)):
-    return students.list_requests(conn, me, trang_thai)
+def requests(
+    response: Response,
+    trang_thai: str | None = None,
+    limit: int = Limit,
+    offset: int = Offset,
+    conn=Depends(db),
+    me: Actor = Depends(actor),
+):
+    return paged(response, students.list_requests(conn, me, trang_thai, limit, offset))
 
 
 @router.post("/requests/{request_id}/handle", tags=["cổng học viên"])
@@ -444,12 +663,15 @@ class PolicyIn(BaseModel):
 
 @router.get("/proposals", tags=["hộp duyệt"])
 def list_proposals(
+    response: Response,
     trang_thai: str | None = Query(default="can_xu_ly"),
     agent: str | None = None,
+    limit: int = Limit,
+    offset: int = Offset,
     conn=Depends(db),
     me: Actor = Depends(actor),
 ):
-    return proposals.list_proposals(conn, me, trang_thai or None, agent)
+    return paged(response, proposals.list_proposals(conn, me, trang_thai or None, agent, limit, offset))
 
 
 @router.get("/proposals/counts", tags=["hộp duyệt"])
@@ -519,16 +741,28 @@ def agents(conn=Depends(db), me: Actor = Depends(actor)):
     ]
 
 
-@router.post("/agents/{name}/run", tags=["agent"])
-def run_now(name: str, user: AuthUser = Depends(current_user)):
-    """Chạy ngay một agent (ngoài lịch). Agent chạy trong transaction riêng của nó."""
+@router.post("/agents/{name}/run", tags=["agent"], status_code=202)
+def run_now(name: str, conn=Depends(db), user: AuthUser = Depends(current_user)):
+    """Yêu cầu chạy ngay một agent (ngoài lịch). Worker nhận trong vài giây; theo dõi kết quả bằng
+    GET /agents/requests/{yeu_cau_id}. Không chạy trong request API: agent có thể gọi LLM vài chục giây."""
     from eduassist.background.agents import AGENTS
-    from eduassist.background.runner import run_agent
+    from eduassist.background.runner import request_run
 
     require(user.actor(), "agent.run")
     if name not in AGENTS:
         raise NotFound("Không có agent này.")
-    return run_agent(name, f"thu_cong:{user.username}")
+    return request_run(conn, name, user.username)
+
+
+@router.get("/agents/requests/{request_id}", tags=["agent"])
+def run_request(request_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+    from eduassist.background.runner import run_request_status
+
+    require(me, "agent.run")
+    st = run_request_status(conn, request_id)
+    if st is None:
+        raise NotFound("Không có yêu cầu này.")
+    return st
 
 
 @router.get("/agents/runs", tags=["agent"])
@@ -549,18 +783,75 @@ def agent_stats(days: int = Query(default=30, ge=1, le=365), conn=Depends(db), m
 
 @router.get("/audit", tags=["quản trị"])
 def audit_log(
+    response: Response,
     actor_id: str | None = None,
     doi_tuong: str | None = None,
     chi_agent: bool = False,
-    limit: int = Query(default=100, le=500),
+    limit: int = Limit,
+    offset: int = Offset,
     conn=Depends(db),
     me: Actor = Depends(actor),
 ):
     require(me, "audit.read")
-    return conn.execute(
+    page = paginate(
+        conn,
         """SELECT * FROM audit_log
            WHERE (%(a)s::text IS NULL OR actor = %(a)s) AND (%(o)s::text IS NULL OR doi_tuong = %(o)s)
-             AND (NOT %(ag)s OR actor LIKE 'agent:%%' OR de_xuat_id IS NOT NULL)
-           ORDER BY created_at DESC LIMIT %(l)s""",
-        {"a": actor_id, "o": doi_tuong, "ag": chi_agent, "l": limit},
-    ).fetchall()
+             AND (NOT %(ag)s OR actor LIKE 'agent:%%' OR de_xuat_id IS NOT NULL)""",
+        {"a": actor_id, "o": doi_tuong, "ag": chi_agent},
+        "created_at DESC, id DESC",
+        limit,
+        offset,
+    )
+    return paged(response, page)
+
+
+# ---------------------------------------------------------------- quản trị tài khoản
+class UserIn(BaseModel):
+    username: str = Field(min_length=3, max_length=32)
+    display_name: str = Field(min_length=2, max_length=80)
+    role: Literal["consultant", "academic", "accountant", "teacher", "manager"]
+    email: str | None = Field(default=None, max_length=254)
+    giang_vien_id: int | None = None
+    gui_email: bool = False
+
+
+class UserPatch(BaseModel):
+    display_name: str | None = Field(default=None, min_length=2, max_length=80)
+    role: Literal["consultant", "academic", "accountant", "teacher", "manager"] | None = None
+    email: str | None = Field(default=None, max_length=254)
+    active: bool | None = None
+
+
+class ResetPwIn(BaseModel):
+    gui_email: bool = False
+
+
+@router.get("/users", tags=["quản trị"])
+def list_users(
+    response: Response,
+    q: str | None = None,
+    role: str | None = None,
+    limit: int = Limit,
+    offset: int = Offset,
+    conn=Depends(db),
+    me: Actor = Depends(actor),
+):
+    return paged(response, accounts.list_users(conn, me, q, role, limit, offset))
+
+
+@router.post("/users", tags=["quản trị"], status_code=201)
+def create_user(body: UserIn, conn=Depends(db), me: Actor = Depends(actor)):
+    return accounts.create_staff_user(
+        conn, me, body.username, body.display_name, body.role, body.email, body.giang_vien_id, body.gui_email
+    )
+
+
+@router.patch("/users/{username}", tags=["quản trị"])
+def update_user(username: str, body: UserPatch, conn=Depends(db), me: Actor = Depends(actor)):
+    return accounts.update_user(conn, me, username, body.display_name, body.role, body.email, body.active)
+
+
+@router.post("/users/{username}/reset-password", tags=["quản trị"])
+def admin_reset_password(username: str, body: ResetPwIn, conn=Depends(db), me: Actor = Depends(actor)):
+    return accounts.admin_reset_password(conn, me, username, body.gui_email)

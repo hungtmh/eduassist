@@ -128,23 +128,89 @@ export function PageHeader({
   description,
   actions,
   back,
+  eyebrow,
 }: {
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
   back?: ReactNode;
+  eyebrow?: ReactNode;
 }) {
   return (
     <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
         {back}
-        <h1 tabIndex={-1} className="text-xl font-semibold tracking-[-0.01em] text-balance outline-none" data-page-title>
+        {eyebrow && <p className="mb-1 text-xs font-medium tracking-[0.05em] text-fg-tertiary uppercase">{eyebrow}</p>}
+        <h1
+          tabIndex={-1}
+          className="font-display text-[1.75rem] leading-tight font-medium text-balance outline-none sm:text-[2rem]"
+          data-page-title
+        >
           {title}
         </h1>
-        {description && <p className="mt-1 max-w-[70ch] text-fg-secondary text-pretty">{description}</p>}
+        {description && <p className="mt-1.5 max-w-[70ch] text-fg-secondary text-pretty">{description}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-3">{actions}</div>}
     </header>
+  );
+}
+
+/** Logo: mặt trời mọc trên trang sách. Trang trí -> aria-hidden. */
+export function SunMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 40 40" className={className} aria-hidden>
+      <rect width="40" height="40" rx="10" fill="var(--color-brand)" />
+      <circle cx="20" cy="23" r="7" fill="var(--color-side)" />
+      {[-60, -30, 0, 30, 60].map((a) => (
+        <line
+          key={a}
+          x1={20 + 10 * Math.sin((a * Math.PI) / 180)}
+          y1={23 - 10 * Math.cos((a * Math.PI) / 180)}
+          x2={20 + 14 * Math.sin((a * Math.PI) / 180)}
+          y2={23 - 14 * Math.cos((a * Math.PI) / 180)}
+          stroke="var(--color-side)"
+          strokeWidth="2.25"
+          strokeLinecap="round"
+        />
+      ))}
+      <rect x="6" y="27" width="28" height="7" fill="var(--color-brand)" />
+      <path d="M7 28.5h11.5q1.5 0 2.5 1.2q1-1.2 2.5-1.2H33" fill="none" stroke="var(--color-side)" strokeWidth="2.25" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function initials(name: string) {
+  const parts = name.replace(/^agent:/, "").replace(/\(.*?\)/g, "").trim().split(/\s+/);
+  const a = parts.length > 1 ? parts[parts.length - 2][0] + parts[parts.length - 1][0] : parts[0]?.slice(0, 2) ?? "?";
+  return a.toUpperCase();
+}
+
+/** Chữ viết tắt tên. Agent luôn tím (nghĩa "do AI làm"), người luôn mực chàm. */
+export function Avatar({ name, agent, size = "md", className }: { name: string; agent?: boolean; size?: "sm" | "md" | "lg"; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cx(
+        "inline-grid shrink-0 place-items-center rounded-full font-semibold",
+        size === "sm" ? "size-7 text-[0.6875rem]" : size === "lg" ? "size-14 text-lg" : "size-9 text-xs",
+        agent ? "bg-agent-subtle text-agent-fg" : "bg-accent-subtle text-accent-fg",
+        className,
+      )}
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
+/** Thanh lấp đầy (sĩ số, tiến độ). Luôn kèm số bằng chữ ở cạnh -> không chỉ dựa vào hình. */
+export function Meter({ value, max, mark, tone = "accent", className }: { value: number; max: number; mark?: number; tone?: "accent" | "warning" | "success" | "danger"; className?: string }) {
+  const w = max ? Math.min(100, (value / max) * 100) : 0;
+  const bar = { accent: "bg-accent-solid", warning: "bg-warning-fg", success: "bg-success-fg", danger: "bg-danger-fg" }[tone];
+  return (
+    <span className={cx("relative block h-1.5 overflow-hidden rounded-full bg-surface-hover", className)} aria-hidden>
+      <span className={cx("absolute inset-y-0 start-0 rounded-full", bar)} style={{ width: `${w}%` }} />
+      {mark != null && max > 0 && <span className="absolute inset-y-0 w-0.5 bg-fg" style={{ insetInlineStart: `${Math.min(100, (mark / max) * 100)}%` }} />}
+    </span>
   );
 }
 
@@ -230,7 +296,7 @@ export function Segmented<T extends string>({
 }: {
   value: T;
   onChange: (v: T) => void;
-  options: { value: T; label: string; count?: number }[];
+  options: { value: T; label: string; count?: number; icon?: ReactNode }[];
   label: string;
 }) {
   return (
@@ -246,6 +312,7 @@ export function Segmented<T extends string>({
             value === o.value ? "bg-surface text-fg shadow-card" : "text-fg-secondary hover:text-fg",
           )}
         >
+          {o.icon}
           {o.label}
           {o.count != null && <span className="num text-fg-tertiary">{o.count}</span>}
         </button>
@@ -402,10 +469,41 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 // ---------------------------------------------------------------- bảng
 export function Table({ children, label }: { children: ReactNode; label: string }) {
   return (
-    <div className="overflow-x-auto" role="region" aria-label={label} tabIndex={0}>
+    <div className="relative overflow-x-auto" role="region" aria-label={label} tabIndex={0}>
       <table className="w-full min-w-[40rem] border-collapse text-start">{children}</table>
     </div>
   );
 }
 export const th = "border-b border-line px-4 py-2.5 text-start text-xs font-medium text-fg-secondary whitespace-nowrap";
 export const td = "border-b border-line px-4 py-3 align-top";
+
+// ---------------------------------------------------------------- phân trang "Tải thêm"
+export function LoadMore({
+  shown,
+  total,
+  noun,
+  hasMore,
+  loading,
+  onMore,
+}: {
+  shown: number;
+  total: number;
+  noun: string;
+  hasMore: boolean;
+  loading?: boolean;
+  onMore: () => void;
+}) {
+  if (!total) return null;
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-center gap-3 text-fg-secondary">
+      <span className="num" aria-live="polite">
+        Đang hiện {shown.toLocaleString("vi-VN")} / {total.toLocaleString("vi-VN")} {noun}
+      </span>
+      {hasMore && (
+        <Button size="sm" loading={loading} onClick={onMore}>
+          Tải thêm
+        </Button>
+      )}
+    </div>
+  );
+}

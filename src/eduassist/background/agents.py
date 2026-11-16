@@ -9,6 +9,7 @@ from datetime import timedelta
 
 from eduassist.background.base import AgentRun, BackgroundAgent, draft_text
 from eduassist.formatting import vnd
+from eduassist.security.pii import mask_text
 from eduassist.services import crm, finance, proposals, reports, rules, training
 from eduassist.services.core import SYSTEM, today
 
@@ -163,9 +164,9 @@ def lead_message(lead: dict, classes: list[dict]) -> tuple[str, str, bool]:
         f"Trung tâm cảm ơn anh/chị {lead['ho_ten']} đã quan tâm. Dựa trên nhu cầu anh/chị chia sẻ, trung tâm xin "
         "gợi ý các lớp phù hợp sắp khai giảng dưới đây. Anh/chị có thể đăng ký học thử miễn phí 1 buổi trước khi quyết định."
     )
-    opening, used = draft_text(
-        LEAD_SYSTEM, f"Tên khách: {lead['ho_ten']}\nNhu cầu: {lead['nhu_cau'] or '(không ghi)'}", fallback, 600
-    )
+    # Không gửi tên khách cho LLM (lời chào có tên do code ghép); che email/SĐT khách có thể ghi trong nhu cầu
+    need = mask_text(lead["nhu_cau"] or "") or "(không ghi)"
+    opening, used = draft_text(LEAD_SYSTEM, f"Nhu cầu của khách: {need}", fallback, 600)
     body = (
         f"Kính gửi anh/chị {lead['ho_ten']},\n\n{opening}\n\nLớp phù hợp đang mở:\n{info}\n\n"
         "Anh/chị trả lời email này hoặc gọi hotline 1900 0000 để giữ chỗ / đặt lịch học thử.\n\n"
@@ -185,14 +186,17 @@ def _process_lead(conn, run: AgentRun, lead: dict) -> None:
         age,
         lead["trang_thai"],
     )
+    message = None
+    if lead["trang_thai"] == "moi" and lead["email"]:
+        classes = _suggest_classes(conn, lead)
+        # Soạn thư (có thể gọi LLM vài giây) TRƯỚC khi ghi điểm: lúc chờ LLM chưa khoá dòng khách nào,
+        # API sửa thông tin khách không phải chờ worker
+        message = lead_message(lead, classes) if classes else None
     if lead["diem"] != score:
         crm.set_score(conn, run.actor, lead["id"], score, "Chấm theo nguồn khách, mức cụ thể của nhu cầu, độ mới")
-    if lead["trang_thai"] != "moi" or not lead["email"]:
+    if message is None:
         return
-    classes = _suggest_classes(conn, lead)
-    if not classes:
-        return
-    subject, body, used_llm = lead_message(lead, classes)
+    subject, body, used_llm = message
     run.submit(
         "gui_tin_tu_van",
         f"Gửi tin tư vấn cho {lead['ho_ten']} (điểm {score})",
@@ -393,9 +397,8 @@ def care_message(info: dict) -> tuple[str, str, bool]:
             "nào bạn thấy khó, giảng viên và trung tâm có thể sắp xếp buổi hỗ trợ thêm hoặc gợi ý tài liệu ôn tập. "
             "Bạn chỉ cần trả lời email này để trung tâm liên hệ."
         )
-    text, used = draft_text(
-        CARE_SYSTEM, f"Học viên: {info['ho_ten']}\nLớp: {info['ma_lop']}\nTình trạng: {reason}", fallback, 700
-    )
+    # Không gửi tên học viên cho LLM: lời chào "Chào <tên>" do code ghép
+    text, used = draft_text(CARE_SYSTEM, f"Lớp: {info['ma_lop']}\nTình trạng: {reason}", fallback, 700)
     body = f"Chào {info['ho_ten']},\n\n{text}\n\nTrân trọng,\nTrung tâm Đào tạo Ánh Dương\nHotline 1900 0000"
     return f"Trung tâm Ánh Dương hỏi thăm bạn - lớp {info['ma_lop']}", body, used
 

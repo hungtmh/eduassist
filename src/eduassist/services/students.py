@@ -5,7 +5,18 @@ KHÔNG BAO GIỜ từ tham số do người dùng gửi lên.
 """
 
 from eduassist.services import enrollment
-from eduassist.services.core import Actor, Forbidden, RuleViolation, audit, emit_event, one, require, today
+from eduassist.services.core import (
+    Actor,
+    Forbidden,
+    Page,
+    RuleViolation,
+    audit,
+    emit_event,
+    one,
+    paginate,
+    require,
+    today,
+)
 
 ENROLLMENTS_SQL = """
 SELECT d.id AS don_hang_id, d.lop_hoc_id, lh.ma_lop, kh.ten AS khoa_hoc, lh.ngay_khai_giang, lh.ca_hoc, lh.lich_hoc,
@@ -23,12 +34,14 @@ WHERE d.hoc_vien_id = %s ORDER BY lh.ngay_khai_giang DESC
 """
 
 
-def list_students(conn, actor: Actor, q: str | None = None, limit: int = 100) -> list[dict]:
+def list_students(conn, actor: Actor, q: str | None = None, limit: int = 100, offset: int = 0) -> Page:
     require(actor, "student.read")
-    return conn.execute(
+    return paginate(
+        conn,
         """SELECT hv.id, hv.ho_ten, hv.email, hv.so_dien_thoai, hv.thanh_pho, hv.nguon, hv.ngay_dang_ky,
                   (SELECT count(*) FROM don_hang d WHERE d.hoc_vien_id = hv.id AND d.trang_thai_hoc = 'dang_hoc')::int
                       AS so_lop_dang_hoc,
+                  EXISTS (SELECT 1 FROM app_user u WHERE u.hoc_vien_id = hv.id) AS co_tai_khoan,
                   coalesce((SELECT sum(d.thanh_tien - coalesce((SELECT sum(so_tien) FROM thanh_toan t
                                                                WHERE t.don_hang_id = d.id), 0))
                             FROM don_hang d WHERE d.hoc_vien_id = hv.id
@@ -36,10 +49,12 @@ def list_students(conn, actor: Actor, q: str | None = None, limit: int = 100) ->
                               AND d.trang_thai_hoc <> 'da_huy'), 0)::bigint AS con_no
            FROM hoc_vien hv
            WHERE %(q)s::text IS NULL OR hv.ho_ten ILIKE %(like)s OR hv.email ILIKE %(like)s
-                 OR hv.so_dien_thoai ILIKE %(like)s OR hv.id::text = %(q)s
-           ORDER BY hv.id DESC LIMIT %(limit)s""",
-        {"q": q, "like": f"%{q}%", "limit": limit},
-    ).fetchall()
+                 OR hv.so_dien_thoai ILIKE %(like)s OR hv.id::text = %(q)s""",
+        {"q": q, "like": f"%{q}%"},
+        "id DESC",
+        limit,
+        offset,
+    )
 
 
 def get_student(conn, actor: Actor, student_id: int) -> dict:
@@ -139,14 +154,18 @@ def submit_request(conn, actor: Actor, kind: str, content: str, enrollment_id: i
     return row
 
 
-def list_requests(conn, actor: Actor, status: str | None = None) -> list[dict]:
+def list_requests(conn, actor: Actor, status: str | None = None, limit: int = 200, offset: int = 0) -> Page:
     require(actor, "request.handle")
-    return conn.execute(
+    return paginate(
+        conn,
         """SELECT y.*, hv.ho_ten, lh.ma_lop FROM yeu_cau y JOIN hoc_vien hv ON hv.id = y.hoc_vien_id
            LEFT JOIN don_hang d ON d.id = y.don_hang_id LEFT JOIN lop_hoc lh ON lh.id = d.lop_hoc_id
-           WHERE (%s::text IS NULL OR y.trang_thai = %s) ORDER BY y.created_at DESC LIMIT 200""",
-        (status, status),
-    ).fetchall()
+           WHERE (%(st)s::text IS NULL OR y.trang_thai = %(st)s)""",
+        {"st": status},
+        "created_at DESC, id DESC",
+        limit,
+        offset,
+    )
 
 
 def handle_request(conn, actor: Actor, request_id: int, approve: bool, reply: str, params: dict | None = None) -> dict:

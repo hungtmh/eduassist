@@ -77,7 +77,7 @@ def draft_text(system: str, user: str, fallback: str, max_chars: int = 900) -> t
     try:
         from eduassist.llm import chat_model
 
-        out = chat_model(temperature=0.3).invoke([("system", system), ("user", user)]).content
+        out = chat_model(temperature=0.3, background=True).invoke([("system", system), ("user", user)]).content
         out = (out if isinstance(out, str) else "").strip()
     except Exception:
         log.warning("LLM không soạn được - dùng bản mẫu", exc_info=True)

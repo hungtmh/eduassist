@@ -2,6 +2,8 @@
 # Toàn bộ hệ thống:          docker compose --profile app up -d --build
 #   Web  http://localhost:3000   API  http://localhost:8000/docs   Mailpit  http://localhost:8025
 # Giao diện chat Chainlit của prototype (tuỳ chọn): docker compose --profile legacy up -d ui
+# Thử cấu hình mở rộng (nhiều tiến trình API + PgBouncer), xem docs/SCALING_PLAN.md:
+#   API_WORKERS=2 docker compose --profile app --profile scale up -d
 x-app-env: &app-env
   DATABASE_URL: postgresql://app_rw:${POSTGRES_PASSWORD:-app_rw_dev_pw}@db:5432/eduassist
   AGENT_RO_URL: postgresql://agent_ro:${AGENT_RO_PASSWORD:-agent_ro_dev_pw}@db:5432/eduassist
@@ -9,14 +11,26 @@ x-app-env: &app-env
   SMTP_HOST: mailpit
   SMTP_PORT: "1025"
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  # Giới hạn lượt gọi, số lượt chat LLM, cache tài khoản dùng chung mọi tiến trình
+  REDIS_URL: redis://redis:6379/0
+  TZ: Asia/Ho_Chi_Minh
 
+# Production dùng file khác: docker-compose.prod.yml (HTTPS, sao lưu, không mở cổng DB, không dữ liệu demo)
 services:
   db:
     image: pgvector/pgvector:pg16
+    # current_date / now()::date trong SQL phải là ngày Việt Nam, không phải UTC
+    command:
+      [
+        "postgres", "-c", "timezone=Asia/Ho_Chi_Minh",
+        # Ghi thống kê từng truy vấn (tìm truy vấn chậm): SELECT * FROM pg_stat_statements
+        "-c", "shared_preload_libraries=pg_stat_statements",
+      ]
     environment:
       POSTGRES_DB: eduassist
       POSTGRES_USER: app_rw
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app_rw_dev_pw}
+      TZ: Asia/Ho_Chi_Minh
     ports:
       - "5433:5432"
     volumes:
@@ -26,6 +40,35 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  redis:
+    # Không lưu xuống đĩa: chỉ chứa bộ đếm và cache có hạn, mất khi khởi động lại cũng không sao
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-lru"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  pgbouncer:
+    # Chỉ để thử chế độ PgBouncer trên máy (profile scale). Cổng 6432; API muốn đi qua thì đặt
+    # DATABASE_URL=...@pgbouncer:6432/eduassist và DB_VIA_PGBOUNCER=true
+    profiles: ["scale"]
+    image: edoburu/pgbouncer:v1.24.1-p1
+    entrypoint: ["/bin/sh", "/start.sh"]
+    environment:
+      APP_PASSWORD: ${POSTGRES_PASSWORD:-app_rw_dev_pw}
+      RO_PASSWORD: ${AGENT_RO_PASSWORD:-agent_ro_dev_pw}
+    volumes:
+      - ./deploy/pgbouncer/start.sh:/start.sh:ro
+    ports:
+      - "6432:6432"
+    depends_on:
+      db:
+        condition: service_healthy
 
   mailpit:
     # SMTP giả: bắt mọi email agent gửi, xem tại http://localhost:8025
@@ -50,7 +93,10 @@ services:
     build: .
     command: ["uvicorn", "eduassist.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     env_file: .env
-    environment: *app-env
+    environment:
+      <<: *app-env
+      # Số tiến trình uvicorn (uvicorn đọc WEB_CONCURRENCY). Nhiều tiến trình cần Redis ở trên.
+      WEB_CONCURRENCY: ${API_WORKERS:-1}
     ports:
       - "8000:8000"
     healthcheck:
@@ -61,6 +107,8 @@ services:
     depends_on:
       setup:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
   worker:
     # Agent chạy nền: đọc outbox sự kiện + chạy theo lịch hằng ngày/tuần
@@ -79,6 +127,11 @@ services:
       context: ./web
       args:
         NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_SITE_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+    environment:
+      # Trang công khai render phía server gọi API qua mạng nội bộ Docker
+      API_INTERNAL_URL: http://api:8000
+      TZ: Asia/Ho_Chi_Minh
     ports:
       - "3000:3000"
     depends_on:

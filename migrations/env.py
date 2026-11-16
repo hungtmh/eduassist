@@ -19,7 +19,12 @@ def run_offline() -> None:
 
 
 def run_online() -> None:
-    engine = create_engine(_url(), poolclass=pool.NullPool)
+    # Migration có thể tạo index trên bảng lớn: tắt timeout mặc định của role ứng dụng cho phiên này
+    engine = create_engine(
+        _url(),
+        poolclass=pool.NullPool,
+        connect_args={"options": "-c statement_timeout=0 -c lock_timeout=0 -c idle_in_transaction_session_timeout=0"},
+    )
     with engine.connect() as conn:
         context.configure(connection=conn, transaction_per_migration=True)
         with context.begin_transaction():

@@ -356,7 +356,9 @@ def generate(today: date, n_students: int = 420, seed: int = 42) -> Dataset:
     start = today - timedelta(days=300)
 
     for i, (ma, ten, dm, td, hp, sb, mt) in enumerate(COURSES, start=1):
-        ds.khoa_hoc.append(dict(id=i, ma=ma, ten=ten, danh_muc=dm, trinh_do=td, hoc_phi=hp, so_buoi=sb, mo_ta=mt))
+        ds.khoa_hoc.append(
+            dict(id=i, ma=ma, slug=ma.lower(), ten=ten, danh_muc=dm, trinh_do=td, hoc_phi=hp, so_buoi=sb, mo_ta=mt)
+        )
 
     # Lớp học: khoá càng hot càng nhiều đợt khai giảng, trải từ ~10 tháng trước tới 2 tháng tới
     lop_id = 0

@@ -3,12 +3,17 @@
 Luật: không xếp trùng phòng hoặc trùng giảng viên; phòng phải đủ sức chứa; lớp chỉ mở khi đạt sĩ số tối thiểu.
 """
 
+import re
 from datetime import date, timedelta
+
+from psycopg.types.json import Jsonb
 
 from eduassist.services import rules
 from eduassist.services.core import (
     Actor,
+    Conflict,
     Forbidden,
+    Page,
     RuleViolation,
     audit,
     check_transition,
@@ -49,13 +54,121 @@ def _can_read_class(conn, actor: Actor, class_id: int) -> None:
     raise Forbidden("Bạn chỉ xem được lớp mình phụ trách.")
 
 
-def list_courses(conn, actor: Actor) -> list[dict]:
+COURSE_CATEGORIES = ("Tiếng Anh", "Tin học văn phòng", "Lập trình", "Phân tích dữ liệu", "Kỹ năng mềm")
+COURSE_LEVELS = ("Cơ bản", "Trung cấp", "Nâng cao")
+COURSE_FIELDS = (
+    "ma",
+    "slug",
+    "ten",
+    "danh_muc",
+    "trinh_do",
+    "hoc_phi",
+    "so_buoi",
+    "mo_ta",
+    "dang_mo_ban",
+    "mo_ta_ngan",
+    "doi_tuong",
+    "ket_qua",
+    "lo_trinh",
+)
+
+
+def list_courses(conn, actor: Actor, only_selling: bool = False) -> list[dict]:
     return conn.execute(
-        "SELECT id, ma, ten, danh_muc, trinh_do, hoc_phi, so_buoi, mo_ta FROM khoa_hoc ORDER BY danh_muc, hoc_phi"
+        """SELECT kh.id, kh.ma, kh.slug, kh.ten, kh.danh_muc, kh.trinh_do, kh.hoc_phi, kh.so_buoi, kh.mo_ta,
+                  kh.dang_mo_ban, kh.mo_ta_ngan, kh.doi_tuong, kh.ket_qua, kh.lo_trinh,
+                  (SELECT count(*) FROM lop_hoc lh WHERE lh.khoa_hoc_id = kh.id
+                     AND lh.trang_thai IN ('sap_khai_giang', 'dang_hoc'))::int AS so_lop_dang_mo
+           FROM khoa_hoc kh WHERE NOT %s OR kh.dang_mo_ban ORDER BY kh.danh_muc, kh.hoc_phi""",
+        (only_selling,),
     ).fetchall()
 
 
-def list_classes(conn, actor: Actor, status: str | None = None, course_id: int | None = None, q: str | None = None):
+def _check_course(data: dict) -> None:
+    if "ma" in data and not re.fullmatch(r"[A-Z0-9][A-Z0-9-]{1,19}", data["ma"]):
+        raise RuleViolation("Mã khoá học 2-20 ký tự, chỉ gồm chữ in hoa không dấu, số và dấu gạch nối (VD: ENG-B1).")
+    if "danh_muc" in data and data["danh_muc"] not in COURSE_CATEGORIES:
+        raise RuleViolation(f"Danh mục phải là một trong: {', '.join(COURSE_CATEGORIES)}.")
+    if "trinh_do" in data and data["trinh_do"] not in COURSE_LEVELS:
+        raise RuleViolation(f"Trình độ phải là một trong: {', '.join(COURSE_LEVELS)}.")
+    if "hoc_phi" in data and not 100_000 <= data["hoc_phi"] <= 200_000_000:
+        raise RuleViolation("Học phí phải từ 100.000đ đến 200.000.000đ.")
+    if "so_buoi" in data and not 1 <= data["so_buoi"] <= 300:
+        raise RuleViolation("Số buổi phải từ 1 đến 300.")
+    if "slug" in data and not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", data["slug"] or ""):
+        raise RuleViolation("Đường dẫn trang chỉ gồm chữ thường không dấu, số và dấu gạch nối (VD: ielts-foundation).")
+    if "lo_trinh" in data:
+        phases = data["lo_trinh"]
+        if (
+            not isinstance(phases, list)
+            or len(phases) > 12
+            or not all(isinstance(x, dict) and str(x.get("ten", "")).strip() for x in phases)
+        ):
+            raise RuleViolation("Lộ trình gồm tối đa 12 giai đoạn, mỗi giai đoạn phải có tên.")
+        data["lo_trinh"] = Jsonb(
+            [{"ten": str(x["ten"]).strip(), "noi_dung": str(x.get("noi_dung", "")).strip()} for x in phases]
+        )
+
+
+def _check_slug(conn, slug: str, course_id: int | None) -> None:
+    if conn.execute("SELECT 1 FROM khoa_hoc WHERE slug = %s AND id <> coalesce(%s, 0)", (slug, course_id)).fetchone():
+        raise Conflict(f"Đường dẫn /khoa-hoc/{slug} đã dùng cho khoá học khác.")
+
+
+def create_course(conn, actor: Actor, data: dict) -> dict:
+    require(actor, "course.write")
+    data = {k: v for k, v in data.items() if k in COURSE_FIELDS}
+    data["ma"] = data["ma"].strip().upper()
+    data["slug"] = (data.get("slug") or data["ma"].lower()).strip().lower()
+    _check_course(data)
+    if conn.execute("SELECT 1 FROM khoa_hoc WHERE ma = %s", (data["ma"],)).fetchone():
+        raise Conflict(f"Đã có khoá học mã {data['ma']}.")
+    _check_slug(conn, data["slug"], None)
+    defaults = {"dang_mo_ban": True, "mo_ta_ngan": None, "doi_tuong": None, "ket_qua": None, "lo_trinh": Jsonb([])}
+    data = {**defaults, **data}
+    cols = ", ".join(data)
+    row = conn.execute(
+        f"INSERT INTO khoa_hoc ({cols}) VALUES ({', '.join(f'%({k})s' for k in data)}) RETURNING *", data
+    ).fetchone()
+    audit(conn, actor, "tao_khoa_hoc", "khoa_hoc", row["id"], after=row)
+    return row
+
+
+def update_course(conn, actor: Actor, course_id: int, changes: dict) -> dict:
+    """Sửa khoá học. Đổi học phí chỉ áp dụng cho ghi danh MỚI: đơn đã ghi danh giữ giá lúc ghi danh."""
+    require(actor, "course.write")
+    before = one(conn, "SELECT * FROM khoa_hoc WHERE id = %s FOR UPDATE", (course_id,), "khoá học")
+    changes = {k: v for k, v in changes.items() if k in COURSE_FIELDS and k != "ma" and v is not None}
+    _check_course(changes)
+    if "slug" in changes:
+        _check_slug(conn, changes["slug"], course_id)
+    if not changes:
+        return before
+    sets = ", ".join(f"{k} = %({k})s" for k in changes)
+    row = conn.execute(
+        f"UPDATE khoa_hoc SET {sets} WHERE id = %(id)s RETURNING *", {**changes, "id": course_id}
+    ).fetchone()
+    diff = {k: row[k] for k in changes if row[k] != before[k]}
+    if diff:
+        audit(conn, actor, "sua_khoa_hoc", "khoa_hoc", course_id, before={k: before[k] for k in diff}, after=diff)
+    return row
+
+
+CLASS_ORDER = "CASE lh.trang_thai WHEN 'dang_hoc' THEN 0 WHEN 'sap_khai_giang' THEN 1 ELSE 2 END, lh.ngay_khai_giang DESC, lh.id DESC"
+
+
+def list_classes(
+    conn,
+    actor: Actor,
+    status: str | None = None,
+    course_id: int | None = None,
+    q: str | None = None,
+    open_only: bool = False,
+    limit: int | None = None,
+    offset: int = 0,
+):
+    """open_only: chỉ lớp đang học / sắp khai giảng (thời khoá biểu, chọn lớp để ghi danh / chuyển lớp).
+    limit: trả Page (có .total) - trung tâm lâu năm có hàng nghìn lớp đã kết thúc, không trả hết một lần."""
     where, params = ["true"], {"active": ACTIVE}
     if not has_perm(actor, "class.read"):
         if not (has_perm(actor, "class.read_own") and actor.giang_vien_id):
@@ -65,20 +178,32 @@ def list_classes(conn, actor: Actor, status: str | None = None, course_id: int |
     if status:
         where.append("lh.trang_thai = %(st)s")
         params["st"] = status
+    if open_only:
+        where.append("lh.trang_thai IN ('dang_hoc', 'sap_khai_giang')")
     if course_id:
         where.append("lh.khoa_hoc_id = %(kh)s")
         params["kh"] = course_id
     if q:
         where.append("(lh.ma_lop ILIKE %(q)s OR kh.ten ILIKE %(q)s)")
         params["q"] = f"%{q}%"
-    return conn.execute(
-        CLASS_LIST_SQL
-        + " WHERE "
-        + " AND ".join(where)
-        + " ORDER BY CASE lh.trang_thai WHEN 'dang_hoc' THEN 0 WHEN 'sap_khai_giang' THEN 1 ELSE 2 END,"
-        " lh.ngay_khai_giang DESC",
-        params,
-    ).fetchall()
+    cond = " WHERE " + " AND ".join(where)
+    if limit is None:
+        return conn.execute(CLASS_LIST_SQL + cond + " ORDER BY " + CLASS_ORDER, params).fetchall()
+    # Theo trang: đếm và lấy id chỉ cần bảng lớp + khoá học; sĩ số, số buổi chỉ tính cho các lớp của trang
+    base = " FROM lop_hoc lh JOIN khoa_hoc kh ON kh.id = lh.khoa_hoc_id" + cond
+    total = conn.execute("SELECT count(*) AS n" + base, params).fetchone()["n"]
+    ids = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT lh.id" + base + " ORDER BY " + CLASS_ORDER + " LIMIT %(_limit)s OFFSET %(_offset)s",
+            {**params, "_limit": max(1, int(limit)), "_offset": max(0, int(offset))},
+        ).fetchall()
+    ]
+    rows = {
+        r["id"]: r
+        for r in conn.execute(CLASS_LIST_SQL + " WHERE lh.id = ANY(%(ids)s)", {"active": ACTIVE, "ids": ids}).fetchall()
+    }
+    return Page([rows[i] for i in ids], total)
 
 
 def get_class(conn, actor: Actor, class_id: int) -> dict:
@@ -108,15 +233,125 @@ def get_class(conn, actor: Actor, class_id: int) -> dict:
 
 def list_teachers(conn, actor: Actor) -> list[dict]:
     require(actor, "class.read")
-    return conn.execute("SELECT id, ho_ten, email, chuyen_mon FROM giang_vien ORDER BY ho_ten").fetchall()
+    return conn.execute(
+        "SELECT id, ho_ten, email, chuyen_mon, username, tieu_su, hien_thi_cong_khai FROM giang_vien ORDER BY ho_ten"
+    ).fetchall()
 
 
 def list_rooms(conn, actor: Actor) -> list[dict]:
     require(actor, "class.read")
     return conn.execute(
-        """SELECT ph.id, ph.ten, ph.suc_chua, cs.ten AS co_so FROM phong_hoc ph JOIN co_so cs ON cs.id = ph.co_so_id
-           ORDER BY cs.ten, ph.ten"""
+        """SELECT ph.id, ph.ten, ph.suc_chua, ph.co_so_id, cs.ten AS co_so FROM phong_hoc ph
+           JOIN co_so cs ON cs.id = ph.co_so_id ORDER BY cs.ten, ph.ten"""
     ).fetchall()
+
+
+# ---------------------------------------------------------------- danh mục: cơ sở, phòng, giảng viên
+def list_branches(conn, actor: Actor) -> list[dict]:
+    require(actor, "class.read")
+    return conn.execute(
+        """SELECT cs.*, (SELECT count(*) FROM phong_hoc ph WHERE ph.co_so_id = cs.id)::int AS so_phong
+           FROM co_so cs ORDER BY cs.ten"""
+    ).fetchall()
+
+
+def save_branch(conn, actor: Actor, branch_id: int | None, ten: str, dia_chi: str) -> dict:
+    """Thêm (branch_id=None) hoặc sửa cơ sở. Chỉ quản lý."""
+    require(actor, "course.write")
+    ten, dia_chi = ten.strip(), dia_chi.strip()
+    if conn.execute(
+        "SELECT 1 FROM co_so WHERE lower(ten) = lower(%s) AND id <> coalesce(%s, 0)", (ten, branch_id)
+    ).fetchone():
+        raise Conflict(f"Đã có cơ sở tên '{ten}'.")
+    if branch_id is None:
+        row = conn.execute("INSERT INTO co_so (ten, dia_chi) VALUES (%s, %s) RETURNING *", (ten, dia_chi)).fetchone()
+        audit(conn, actor, "tao_co_so", "co_so", row["id"], after=row)
+        return row
+    before = one(conn, "SELECT * FROM co_so WHERE id = %s", (branch_id,), "cơ sở")
+    row = conn.execute(
+        "UPDATE co_so SET ten = %s, dia_chi = %s WHERE id = %s RETURNING *", (ten, dia_chi, branch_id)
+    ).fetchone()
+    audit(conn, actor, "sua_co_so", "co_so", branch_id, before=before, after=row)
+    return row
+
+
+def save_room(conn, actor: Actor, room_id: int | None, co_so_id: int, ten: str, suc_chua: int) -> dict:
+    """Thêm hoặc sửa phòng. Giảm sức chứa xuống dưới sĩ số tối đa của lớp đang dùng phòng -> từ chối."""
+    require(actor, "class.write")
+    ten = ten.strip()
+    one(conn, "SELECT id FROM co_so WHERE id = %s", (co_so_id,), "cơ sở")
+    if not 1 <= suc_chua <= 500:
+        raise RuleViolation("Sức chứa phải từ 1 đến 500.")
+    if conn.execute(
+        "SELECT 1 FROM phong_hoc WHERE co_so_id = %s AND lower(ten) = lower(%s) AND id <> coalesce(%s, 0)",
+        (co_so_id, ten, room_id),
+    ).fetchone():
+        raise Conflict(f"Cơ sở này đã có phòng tên '{ten}'.")
+    if room_id is None:
+        row = conn.execute(
+            "INSERT INTO phong_hoc (co_so_id, ten, suc_chua) VALUES (%s, %s, %s) RETURNING *", (co_so_id, ten, suc_chua)
+        ).fetchone()
+        audit(conn, actor, "tao_phong", "phong_hoc", row["id"], after=row)
+        return row
+    before = one(conn, "SELECT * FROM phong_hoc WHERE id = %s", (room_id,), "phòng học")
+    too_big = conn.execute(
+        """SELECT ma_lop, si_so_toi_da FROM lop_hoc WHERE phong_hoc_id = %s AND si_so_toi_da > %s
+             AND trang_thai IN ('sap_khai_giang', 'dang_hoc') ORDER BY si_so_toi_da DESC LIMIT 1""",
+        (room_id, suc_chua),
+    ).fetchone()
+    if too_big:
+        raise RuleViolation(
+            f"Lớp {too_big['ma_lop']} đang dùng phòng này với sĩ số tối đa {too_big['si_so_toi_da']}; "
+            "giảm sĩ số lớp hoặc đổi phòng trước."
+        )
+    row = conn.execute(
+        "UPDATE phong_hoc SET co_so_id = %s, ten = %s, suc_chua = %s WHERE id = %s RETURNING *",
+        (co_so_id, ten, suc_chua, room_id),
+    ).fetchone()
+    audit(conn, actor, "sua_phong", "phong_hoc", room_id, before=before, after=row)
+    return row
+
+
+def save_teacher(
+    conn,
+    actor: Actor,
+    teacher_id: int | None,
+    ho_ten: str,
+    email: str,
+    chuyen_mon: str,
+    tieu_su: str | None = None,
+    hien_thi_cong_khai: bool = True,
+) -> dict:
+    """Thêm hoặc sửa hồ sơ giảng viên (tài khoản đăng nhập cấp riêng ở trang Người dùng)."""
+    require(actor, "class.write")
+    ho_ten, email, chuyen_mon = ho_ten.strip(), email.strip().lower(), chuyen_mon.strip()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise RuleViolation("Email không hợp lệ.")
+    dup = conn.execute(
+        "SELECT ho_ten, email FROM giang_vien WHERE (lower(ho_ten) = lower(%s) OR email = %s) AND id <> coalesce(%s, 0)",
+        (ho_ten, email, teacher_id),
+    ).fetchone()
+    if dup:
+        raise Conflict(f"Đã có giảng viên {dup['ho_ten']} ({dup['email']}).")
+    if teacher_id is None:
+        row = conn.execute(
+            """INSERT INTO giang_vien (ho_ten, email, chuyen_mon, tieu_su, hien_thi_cong_khai)
+               VALUES (%s, %s, %s, %s, %s) RETURNING *""",
+            (ho_ten, email, chuyen_mon, (tieu_su or "").strip() or None, hien_thi_cong_khai),
+        ).fetchone()
+        audit(conn, actor, "tao_giang_vien", "giang_vien", row["id"], after=row)
+        return row
+    before = one(conn, "SELECT * FROM giang_vien WHERE id = %s", (teacher_id,), "giảng viên")
+    row = conn.execute(
+        """UPDATE giang_vien SET ho_ten = %s, email = %s, chuyen_mon = %s, tieu_su = %s, hien_thi_cong_khai = %s
+           WHERE id = %s RETURNING *""",
+        (ho_ten, email, chuyen_mon, (tieu_su or "").strip() or None, hien_thi_cong_khai, teacher_id),
+    ).fetchone()
+    # lop_hoc.giang_vien (tên dạng chữ, từ prototype) vẫn được một số báo cáo đọc -> giữ đồng bộ
+    if before["ho_ten"] != ho_ten:
+        conn.execute("UPDATE lop_hoc SET giang_vien = %s WHERE giang_vien_id = %s", (ho_ten, teacher_id))
+    audit(conn, actor, "sua_giang_vien", "giang_vien", teacher_id, before=before, after=row)
+    return row
 
 
 # ---------------------------------------------------------------- trùng lịch
@@ -187,7 +422,11 @@ def create_class(conn, actor: Actor, data: dict) -> dict:
     """data: khoa_hoc_id, ngay_khai_giang, ca_hoc, lich_hoc, hinh_thuc, si_so_toi_da, si_so_toi_thieu,
     giang_vien_id, phong_hoc_id."""
     require(actor, "class.write")
-    course = one(conn, "SELECT id, ma, so_buoi FROM khoa_hoc WHERE id = %s", (data["khoa_hoc_id"],), "khoá học")
+    course = one(
+        conn, "SELECT id, ma, so_buoi, dang_mo_ban FROM khoa_hoc WHERE id = %s", (data["khoa_hoc_id"],), "khoá học"
+    )
+    if not course["dang_mo_ban"]:
+        raise RuleViolation("Khoá học này đã ngừng bán, không mở lớp mới được.")
     if data["ngay_khai_giang"] <= today():
         raise RuleViolation("Ngày khai giảng phải sau hôm nay.")
     if not 1 <= data["si_so_toi_thieu"] <= data["si_so_toi_da"]:

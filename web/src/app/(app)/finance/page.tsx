@@ -1,6 +1,6 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { Layers, List, Search } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
@@ -14,20 +14,23 @@ import {
   Dialog,
   EmptyState,
   ErrorBox,
+  LoadMore,
   Field,
   Input,
   PageHeader,
   Segmented,
   Select,
   Spinner,
-  Stat,
+
   StatusBadge,
   Table,
   td,
   th,
+  cx,
   useToast,
 } from "@/components/ui";
 import { api } from "@/lib/api";
+import { usePaged } from "@/lib/use-paged";
 import { daysFrom, fmtDate, vnd } from "@/lib/format";
 import { ENROLL_STATUS, INSTALLMENT_STATUS, INVOICE_STATUS, PAY_METHOD } from "@/lib/labels";
 
@@ -91,19 +94,26 @@ function InvoiceDialog({ id, onClose, onChanged }: { id: number | null; onClose:
             <StatusBadge map={ENROLL_STATUS} value={inv.trang_thai_hoc} />
             {inv.tra_gop && <Badge>Trả góp 2 đợt</Badge>}
           </div>
-          <dl className="num grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              ["Học phí", vnd(inv.hoc_phi_goc)],
-              ["Giảm", vnd(inv.giam_gia)],
-              ["Đã đóng", vnd(inv.da_dong)],
-              ["Còn nợ", vnd(inv.con_no)],
-            ].map(([k, v]) => (
-              <div key={k} className="rounded-lg bg-surface-muted p-3">
-                <dt className="text-fg-secondary">{k}</dt>
-                <dd className="text-base font-semibold">{v}</dd>
+          <div className="receipt-edge rounded-t-xl bg-brand-subtle px-4 pt-4 pb-6">
+            <p className="text-center text-xs font-medium tracking-[0.05em] text-fg-secondary uppercase">Phiếu học phí · Trung tâm Ánh Dương</p>
+            <dl className="num mt-3 flex flex-col gap-1.5">
+              {[
+                ["Học phí gốc", vnd(inv.hoc_phi_goc)],
+                ["Giảm giá", inv.giam_gia ? `− ${vnd(inv.giam_gia)}` : vnd(0)],
+                ["Đã đóng", inv.da_dong ? `− ${vnd(inv.da_dong)}` : vnd(0)],
+              ].map(([k, v]) => (
+                <div key={k} className="flex items-baseline gap-2">
+                  <dt className="text-fg-secondary">{k}</dt>
+                  <span className="flex-1 border-b border-dotted border-line-strong" aria-hidden />
+                  <dd>{v}</dd>
+                </div>
+              ))}
+              <div className="mt-2 flex items-baseline justify-between gap-2 border-t border-dashed border-control-border pt-2">
+                <dt className="font-semibold">Còn phải đóng</dt>
+                <dd className="font-display text-2xl font-semibold">{vnd(inv.con_no)}</dd>
               </div>
-            ))}
-          </dl>
+            </dl>
+          </div>
           <section>
             <h3 className="mb-2 font-medium">Các đợt</h3>
             <ul className="rounded-lg border border-line">
@@ -221,41 +231,136 @@ function Refunds() {
   );
 }
 
+/** Bậc nhắc nợ trùng với ngưỡng agent công nợ dùng (rules.DEBT_TIERS: -3, 1, 7, 14). */
+const RUNGS = [
+  { key: "tam_dung", title: "Quá hạn từ 14 ngày", agent: "Agent đề xuất tạm dừng học, cần kế toán duyệt", tone: "danger", test: (d: number) => d <= -14 },
+  { key: "qua_han_7", title: "Quá hạn 7–13 ngày", agent: "Nhắc lần 2, kèm số hotline kế toán", tone: "danger", test: (d: number) => d <= -7 && d > -14 },
+  { key: "qua_han_1", title: "Quá hạn 1–6 ngày", agent: "Nhắc lần 1, tự gửi trong hạn mức L2", tone: "warning", test: (d: number) => d < 0 && d > -7 },
+  { key: "truoc_han", title: "Tới hạn trong 3 ngày", agent: "Nhắc trước hạn, tự gửi trong hạn mức L2", tone: "warning", test: (d: number) => d >= 0 && d <= 3 },
+  { key: "chua_toi", title: "Chưa tới hạn", agent: "Chưa cần nhắc", tone: "neutral", test: (d: number) => d > 3 },
+] as const;
+
+const RUNG_STYLE = {
+  danger: { bar: "bg-danger-fg", head: "text-danger-fg" },
+  warning: { bar: "bg-warning-fg", head: "text-warning-fg" },
+  neutral: { bar: "bg-line-strong", head: "text-fg-secondary" },
+} as const;
+
+function Ladder({ invoices, onOpen }: { invoices: Invoice[]; onOpen: (id: number) => void }) {
+  const withDue = invoices.filter((i) => i.han_gan_nhat && i.con_no > 0 && i.trang_thai_hoc !== "da_huy");
+  const total = withDue.reduce((s, i) => s + i.con_no, 0) || 1;
+  return (
+    <ol className="flex flex-col gap-3">
+      {RUNGS.map((r, idx) => {
+        const rows = withDue.filter((i) => r.test(daysFrom(i.han_gan_nhat!))).sort((a, b) => a.han_gan_nhat!.localeCompare(b.han_gan_nhat!));
+        const sum = rows.reduce((s, i) => s + i.con_no, 0);
+        const st = RUNG_STYLE[r.tone];
+        return (
+          <li key={r.key} className="grid gap-3 rounded-2xl bg-surface p-3 shadow-card md:grid-cols-[15rem_minmax(0,1fr)]">
+            <div className="flex gap-3 md:flex-col md:gap-1 md:border-e md:border-dashed md:border-line-strong md:pe-3">
+              <span className="font-display num text-3xl leading-none font-medium text-fg-tertiary" aria-hidden>
+                {RUNGS.length - idx}
+              </span>
+              <div className="min-w-0">
+                <h2 className={cx("font-semibold", st.head)}>{r.title}</h2>
+                <p className="text-xs text-fg-secondary text-pretty">{r.agent}</p>
+                <p className="num mt-2 font-medium">
+                  {vnd(sum)} <span className="font-normal text-fg-tertiary">· {rows.length} hoá đơn</span>
+                </p>
+                <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-surface-hover" aria-hidden>
+                  <span className={cx("block h-full rounded-full", st.bar)} style={{ width: `${(sum / total) * 100}%` }} />
+                </span>
+              </div>
+            </div>
+            {rows.length === 0 ? (
+              <p className="self-center text-fg-tertiary">Không có hoá đơn ở bậc này.</p>
+            ) : (
+              <ul className="relative flex snap-x gap-2 overflow-x-auto pb-1" aria-label={r.title}>
+                {rows.map((i) => {
+                  const d = daysFrom(i.han_gan_nhat!);
+                  return (
+                    <li key={i.id} className="w-52 shrink-0 snap-start">
+                      <button
+                        onClick={() => onOpen(i.id)}
+                        className="pressable block h-full w-full rounded-xl bg-surface-muted px-3 py-2.5 text-start hover:bg-surface-hover"
+                      >
+                        <span className="block truncate font-medium">{i.ho_ten}</span>
+                        <span className="block truncate font-mono text-xs text-fg-tertiary">
+                          #{i.id} · {i.ma_lop}
+                        </span>
+                        <span className="num mt-2 block text-base font-semibold">{vnd(i.con_no)}</span>
+                        <span className={cx("num block text-xs", d < 0 ? "font-medium text-danger-fg" : "text-fg-secondary")}>
+                          {d < 0 ? `Quá hạn ${-d} ngày` : d === 0 ? "Tới hạn hôm nay" : `Hạn ${fmtDate(i.han_gan_nhat)}`}
+                          {i.trang_thai_hoc === "tam_dung" && " · đang tạm dừng"}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function Finance() {
   const params = useSearchParams();
   const router = useRouter();
+  const [view, setView] = useState<"ladder" | "list">("ladder");
   const [filter, setFilter] = useState<"con_no" | "qua_han" | "all">("con_no");
   const [q, setQ] = useState("");
   const qs = new URLSearchParams({
-    ...(filter === "con_no" ? { trang_thai: "con_no" } : {}),
-    ...(filter === "qua_han" ? { qua_han: "true" } : {}),
+    ...(view === "ladder" || filter === "con_no" ? { trang_thai: "con_no" } : {}),
+    ...(view === "list" && filter === "qua_han" ? { qua_han: "true" } : {}),
     ...(q ? { q } : {}),
   });
-  const { data, error, mutate } = useSWR<Invoice[]>(`/invoices?${qs}`);
+  // Thang nhắc nợ cần thấy nhiều hoá đơn một lúc để chia bậc -> trang lớn hơn sổ hoá đơn
+  const list = usePaged<Invoice>(`/invoices?${qs}`, view === "ladder" ? 500 : 100);
+  const { items: data, error, mutate } = list;
   const { data: sum } = useSWR<{ qua_han: number; hoc_vien_qua_han: number; sap_toi_han_7_ngay: number }>("/invoices/summary");
   const open = Number(params.get("id")) || null;
+  const openInvoice = (id: number) => router.replace(`/finance?id=${id}`, { scroll: false });
   return (
     <>
-      <PageHeader title="Tài chính" description="Hoá đơn và các đợt thanh toán. Agent công nợ tự nhắc học phí theo bậc trước hạn 3 ngày, quá hạn 1 và 7 ngày; quá 14 ngày đề xuất tạm dừng học." />
-      {sum && (
-        <div className="mb-4 grid gap-4 sm:grid-cols-3">
-          <Stat label="Nợ quá hạn" value={vnd(sum.qua_han)} tone={sum.qua_han ? "danger" : undefined} />
-          <Stat label="Học viên có đợt quá hạn" value={sum.hoc_vien_qua_han} />
-          <Stat label="Tới hạn trong 7 ngày" value={vnd(sum.sap_toi_han_7_ngay)} />
-        </div>
-      )}
+      <PageHeader
+        eyebrow="Tài chính"
+        title="Thang nhắc nợ"
+        description={
+          sum ? (
+            <>
+              <span className="num font-medium text-danger-fg">{vnd(sum.qua_han)}</span> quá hạn ở {sum.hoc_vien_qua_han} học viên,{" "}
+              <span className="num font-medium text-fg">{vnd(sum.sap_toi_han_7_ngay)}</span> tới hạn trong 7 ngày. Agent công nợ leo từng bậc; chỉ kế toán
+              ghi nhận được tiền đã thu.
+            </>
+          ) : undefined
+        }
+      />
       <Refunds />
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Segmented
-          label="Lọc hoá đơn"
-          value={filter}
-          onChange={setFilter}
+          label="Kiểu xem"
+          value={view}
+          onChange={setView}
           options={[
-            { value: "con_no", label: "Còn nợ" },
-            { value: "qua_han", label: "Có đợt quá hạn" },
-            { value: "all", label: "Tất cả" },
+            { value: "ladder", label: "Theo bậc nhắc", icon: <Layers className="size-3.5" aria-hidden /> },
+            { value: "list", label: "Sổ hoá đơn", icon: <List className="size-3.5" aria-hidden /> },
           ]}
         />
+        {view === "list" && (
+          <Segmented
+            label="Lọc hoá đơn"
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { value: "con_no", label: "Còn nợ" },
+              { value: "qua_han", label: "Có đợt quá hạn" },
+              { value: "all", label: "Tất cả" },
+            ]}
+          />
+        )}
         <div className="relative min-w-56 flex-1 sm:max-w-xs">
           <Search className="pointer-events-none absolute start-3 top-2.5 size-4 text-fg-tertiary" aria-hidden />
           <label htmlFor="inv-q" className="sr-only">
@@ -265,55 +370,62 @@ function Finance() {
         </div>
       </div>
       {error && <ErrorBox error={error} onRetry={() => mutate()} />}
-      <Card>
-        {!data ? (
-          <Spinner />
-        ) : data.length === 0 ? (
-          <EmptyState title="Không có hoá đơn nào khớp bộ lọc" />
-        ) : (
-          <Table label="Hoá đơn">
-            <thead>
-              <tr>
-                <th className={th}>Học viên</th>
-                <th className={th}>Thanh toán</th>
-                <th className={th}>Hạn gần nhất</th>
-                <th className={`${th} text-end`}>Phải trả</th>
-                <th className={`${th} text-end`}>Còn nợ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((i) => {
-                const d = i.han_gan_nhat ? daysFrom(i.han_gan_nhat) : null;
-                return (
-                  <tr key={i.id} className="hover:bg-surface-hover">
-                    <td className={td}>
-                      <button className="text-start font-medium hover:underline" onClick={() => router.replace(`/finance?id=${i.id}`, { scroll: false })}>
-                        {i.ho_ten}
-                      </button>
-                      <p className="text-fg-tertiary">
-                        #{i.id} · {i.ma_lop}
-                      </p>
-                    </td>
-                    <td className={td}>
-                      <div className="flex flex-col items-start gap-1">
-                        <StatusBadge map={INVOICE_STATUS} value={i.trang_thai} />
-                        {i.trang_thai_hoc === "tam_dung" && <StatusBadge map={ENROLL_STATUS} value="tam_dung" />}
-                      </div>
-                    </td>
-                    <td className={`${td} num`}>
-                      {i.han_gan_nhat ? fmtDate(i.han_gan_nhat) : "–"}
-                      {d != null && d < 0 && <p className="text-xs text-danger-fg">Quá hạn {-d} ngày</p>}
-                      {d != null && d >= 0 && d <= 3 && <p className="text-xs text-warning-fg">Còn {d} ngày</p>}
-                    </td>
-                    <td className={`${td} num text-end`}>{vnd(i.thanh_tien)}</td>
-                    <td className={`${td} num text-end font-medium`}>{vnd(i.con_no)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+      {!data ? (
+        <Spinner />
+      ) : view === "ladder" ? (
+        <Ladder invoices={data} onOpen={openInvoice} />
+      ) : (
+        <Card>
+          {data.length === 0 ? (
+            <EmptyState title="Không có hoá đơn nào khớp bộ lọc" />
+          ) : (
+            <Table label="Hoá đơn">
+              <thead>
+                <tr>
+                  <th className={th}>Học viên</th>
+                  <th className={th}>Thanh toán</th>
+                  <th className={th}>Hạn gần nhất</th>
+                  <th className={`${th} text-end`}>Phải trả</th>
+                  <th className={`${th} text-end`}>Còn nợ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((i) => {
+                  const d = i.han_gan_nhat ? daysFrom(i.han_gan_nhat) : null;
+                  return (
+                    <tr key={i.id} className="hover:bg-surface-hover">
+                      <td className={td}>
+                        <button className="text-start font-medium hover:underline" onClick={() => openInvoice(i.id)}>
+                          {i.ho_ten}
+                        </button>
+                        <p className="font-mono text-xs text-fg-tertiary">
+                          #{i.id} · {i.ma_lop}
+                        </p>
+                      </td>
+                      <td className={td}>
+                        <div className="flex flex-col items-start gap-1">
+                          <StatusBadge map={INVOICE_STATUS} value={i.trang_thai} />
+                          {i.trang_thai_hoc === "tam_dung" && <StatusBadge map={ENROLL_STATUS} value="tam_dung" />}
+                        </div>
+                      </td>
+                      <td className={`${td} num`}>
+                        {i.han_gan_nhat ? fmtDate(i.han_gan_nhat) : "–"}
+                        {d != null && d < 0 && <p className="text-xs text-danger-fg">Quá hạn {-d} ngày</p>}
+                        {d != null && d >= 0 && d <= 3 && <p className="text-xs text-warning-fg">Còn {d} ngày</p>}
+                      </td>
+                      <td className={`${td} num text-end`}>{vnd(i.thanh_tien)}</td>
+                      <td className={`${td} num text-end font-medium`}>{vnd(i.con_no)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+          )}
+        </Card>
+      )}
+      {data && (
+        <LoadMore shown={data.length} total={list.total} noun="hoá đơn" hasMore={list.hasMore} loading={list.loadingMore} onMore={list.loadMore} />
+      )}
       <InvoiceDialog id={open} onClose={() => router.replace("/finance", { scroll: false })} onChanged={() => mutate()} />
     </>
   );

@@ -101,3 +101,13 @@ export const REQUEST_KIND: Record<string, string> = {
 export const PAY_METHOD: Record<string, string> = { chuyen_khoan: "Chuyển khoản", tien_mat: "Tiền mặt", the: "Thẻ" };
 
 export const label = (map: Record<string, Label>, key: string): Label => map[key] ?? [key, "neutral"];
+
+export const ROLE: Record<string, string> = {
+  student: "Học viên",
+  consultant: "Tư vấn viên",
+  academic: "Giáo vụ",
+  accountant: "Kế toán",
+  teacher: "Giảng viên",
+  manager: "Quản lý",
+};
+export const STAFF_ROLES = ["consultant", "academic", "accountant", "teacher", "manager"] as const;

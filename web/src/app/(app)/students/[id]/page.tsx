@@ -6,6 +6,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import useSWR from "swr";
 import { EnrollDialog } from "@/components/enroll-dialog";
+import { StudentAccountCard } from "@/components/student-account";
 import { useAuth } from "@/components/providers";
 import {
   Badge,
@@ -73,7 +74,7 @@ function StudentDetail() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const { data: siblings } = useSWR<{ id: number; ma_lop: string; si_so: number; si_so_toi_da: number; trang_thai: string; khoa_hoc: string; lich_hoc: string; ca_hoc: string }[]>(
-    action?.kind === "transfer" ? `/classes` : null,
+    action?.kind === "transfer" ? `/classes?con_mo=true` : null,
   );
 
   useEffect(() => {
@@ -211,7 +212,8 @@ function StudentDetail() {
         )}
       </Card>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+      <div className="mt-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+        <StudentAccountCard studentId={s.id} email={s.email} />
         <Card>
           <CardHeader title="Yêu cầu đã gửi" />
           <ul className="px-4 pb-4">

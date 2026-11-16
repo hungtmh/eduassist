@@ -70,8 +70,21 @@ def dashboard(conn, actor: Actor) -> dict:
                                    AND created_at > now() - interval '7 days')::int AS duyet_7_ngay
            FROM de_xuat_agent"""
     ).fetchone()
+    sessions_today = conn.execute(
+        """SELECT b.id, b.so_thu_tu, lh.id AS lop_hoc_id, lh.ma_lop, kh.ten AS khoa_hoc, kh.so_buoi, lh.ca_hoc,
+                  lh.hinh_thuc, coalesce(gv.ho_ten, lh.giang_vien) AS giang_vien, ph.ten AS phong, cs.ten AS co_so,
+                  (SELECT count(*) FROM don_hang d WHERE d.lop_hoc_id = lh.id
+                       AND d.trang_thai_hoc = 'dang_hoc')::int AS si_so
+           FROM buoi_hoc b JOIN lop_hoc lh ON lh.id = b.lop_hoc_id JOIN khoa_hoc kh ON kh.id = lh.khoa_hoc_id
+           LEFT JOIN giang_vien gv ON gv.id = lh.giang_vien_id
+           LEFT JOIN phong_hoc ph ON ph.id = lh.phong_hoc_id LEFT JOIN co_so cs ON cs.id = ph.co_so_id
+           WHERE b.ngay = %s AND b.trang_thai <> 'nghi' AND lh.trang_thai = 'dang_hoc'
+           ORDER BY array_position(ARRAY['sang', 'chieu', 'toi'], lh.ca_hoc), lh.ma_lop""",
+        (t,),
+    ).fetchall()
     return {
         "ngay": t,
+        "lich_hom_nay": sessions_today,
         "doanh_thu_thang": _revenue(conn, month_start, t + timedelta(days=1)),
         "doanh_thu_cung_ky_thang_truoc": _revenue(conn, prev_month_start, same_day_prev + timedelta(days=1)),
         "doanh_thu_theo_thang": revenue_by_month,

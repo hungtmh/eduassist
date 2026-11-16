@@ -9,6 +9,7 @@ import psycopg
 from eduassist.config import get_settings
 from eduassist.db import ro_pool
 from eduassist.formatting import vn_number
+from eduassist.security.pii import mask_cell
 from eduassist.security.sql_guard import validate_and_limit
 
 # Bảng nghiệp vụ agent phân tích được SELECT (dùng chung cho lớp kiểm tra sqlglot VÀ quyền GRANT của role agent_ro).
@@ -39,7 +40,10 @@ class QueryResult:
             return "(0 dòng)"
         shown = self.rows[:MAX_ROWS_SHOWN_TO_LLM]
         lines = ["| " + " | ".join(self.columns) + " |", "|" + "---|" * len(self.columns)]
-        lines += ["| " + " | ".join(_fmt(v) for v in r) + " |" for r in shown]
+        # Đây là thứ LLM đọc -> che email / SĐT (xem security/pii.py)
+        lines += [
+            "| " + " | ".join(_fmt(mask_cell(c, v)) for c, v in zip(self.columns, r, strict=True)) + " |" for r in shown
+        ]
         if len(self.rows) > len(shown):
             lines.append(f"... (còn {len(self.rows) - len(shown)} dòng, tổng {len(self.rows)} dòng)")
         return "\n".join(lines)

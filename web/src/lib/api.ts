@@ -40,20 +40,38 @@ function detailOf(body: unknown, status: number): string {
   return `Không thực hiện được (mã ${status}). Thử lại sau ít phút.`;
 }
 
-export async function api<T = unknown>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+export const MUST_CHANGE_PATH = "/doi-mat-khau";
+
+// API quá tải trả 503 + Retry-After (giây). Request ĐỌC tự thử lại tối đa 3 lần, chờ theo Retry-After, tăng dần
+// và lệch ngẫu nhiên: hàng nghìn trình duyệt không cùng thử lại một lúc (dồn tải đúng lúc hệ thống đang hồi phục).
+// Request GHI không tự thử lại: người dùng bấm lại khi thấy thông báo, tránh ghi hai lần.
+const MAX_RETRIES = 3;
+
+function retryDelayMs(res: Response, attempt: number): number {
+  const after = Number(res.headers.get("Retry-After"));
+  const base = Number.isFinite(after) && after > 0 ? Math.min(after, 10) * 1000 : 1000;
+  return base * 2 ** attempt * (0.75 + Math.random() * 0.5);
+}
+
+async function request(path: string, init?: { method?: string; body?: unknown }): Promise<{ res: Response; body: unknown }> {
   const token = getToken();
+  const method = init?.method ?? (init?.body !== undefined ? "POST" : "GET");
   let res: Response;
-  try {
-    res = await fetch(`${API_URL}${path}`, {
-      method: init?.method ?? (init?.body !== undefined ? "POST" : "GET"),
-      headers: {
-        ...(init?.body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
-    });
-  } catch {
-    throw new ApiError(detailOf(null, 0), 0);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      res = await fetch(`${API_URL}${path}`, {
+        method,
+        headers: {
+          ...(init?.body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+      });
+    } catch {
+      throw new ApiError(detailOf(null, 0), 0);
+    }
+    if (res.status !== 503 || method !== "GET" || attempt >= MAX_RETRIES) break;
+    await new Promise((ok) => setTimeout(ok, retryDelayMs(res, attempt)));
   }
   if (res.status === 401 && path !== "/auth/login") {
     setToken(null);
@@ -61,9 +79,27 @@ export async function api<T = unknown>(path: string, init?: { method?: string; b
       window.location.href = "/login?expired=1";
     }
   }
+  // Tài khoản mới / vừa được cấp lại mật khẩu: API chặn mọi thứ cho tới khi đổi mật khẩu
+  if (res.status === 403 && res.headers.get("X-Must-Change-Password") === "1" && typeof window !== "undefined") {
+    if (window.location.pathname !== MUST_CHANGE_PATH) window.location.href = MUST_CHANGE_PATH;
+  }
   const body = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
   if (!res.ok) throw new ApiError(detailOf(body, res.status), res.status);
-  return body as T;
+  return { res, body };
+}
+
+export async function api<T = unknown>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  return (await request(path, init)).body as T;
+}
+
+export type Paged<T> = { items: T[]; total: number };
+
+/** Danh sách có phân trang: body là mảng, tổng số dòng nằm ở header X-Total-Count. */
+export async function apiPage<T>(path: string): Promise<Paged<T>> {
+  const { res, body } = await request(path);
+  const items = (body as T[]) ?? [];
+  const total = Number(res.headers.get("X-Total-Count") ?? items.length);
+  return { items, total: Number.isFinite(total) ? total : items.length };
 }
 
 export const fetcher = <T,>(path: string) => api<T>(path);

@@ -14,3 +14,7 @@ wheels/
 .files/
 *.log
 
+
+# Production
+.env.production
+backups/

@@ -1,7 +1,8 @@
 # EduAssist Platform 🎓
 
 **Nền tảng quản lý và vận hành trung tâm đào tạo, tích hợp hệ đa tác tử AI** – theo đề xuất đồ án
-[`docs/EduAssist_Platform_Proposal.pdf`](docs/EduAssist_Platform_Proposal.pdf).
+[`docs/EduAssist_Platform_Proposal.pdf`](docs/EduAssist_Platform_Proposal.pdf); đề cương đồ án tốt nghiệp:
+[`docs/EduAssist_De_Cuong_DATN.pdf`](docs/EduAssist_De_Cuong_DATN.pdf) (sinh bằng `docs/de_cuong.py`).
 Hệ thống quản lý trọn vòng đời học viên (tuyển sinh → ghi danh → xếp lớp → điểm danh → thu học phí → chăm sóc),
 và **agent AI tham gia vận hành**: tự phát hiện việc cần làm, soạn sẵn, thực hiện trong hạn mức hoặc chờ người duyệt.
 
@@ -21,6 +22,16 @@ Prototype (nhánh `main`) là một chatbot Chainlit. Đồ án biến nó thàn
 | Agent chỉ chạy khi có người hỏi | **5 agent chạy nền** (công nợ, tuyển sinh, giáo vụ, chăm sóc, báo cáo) + worker, outbox sự kiện |
 | Duyệt bằng nút trong chat | **Hộp duyệt** + **mức tự chủ L0/L1/L2/Cấm theo từng loại thao tác** |
 | 7 bảng, tạo bằng 1 file SQL | ~25 bảng, máy trạng thái, Alembic migration, audit log |
+
+## Ba khu giao diện
+
+| Khu | Đường dẫn | Ai dùng |
+|---|---|---|
+| Web công khai | `/`, `/khoa-hoc`, `/lich-khai-giang`, `/gioi-thieu`, `/chinh-sach`, `/dang-ky-tu-van` | Khách tìm khoá học (không đăng nhập, render phía server, có SEO và chatbot tư vấn) |
+| Cổng học viên | `/portal` | Học viên (khung riêng, ưu tiên điện thoại) |
+| Bàn làm việc | `/hom-nay`, `/dashboard`, `/inbox`, `/leads`, `/lich`... | Tư vấn, giáo vụ, kế toán, giảng viên, quản lý |
+
+Form tư vấn trên web tạo khách tiềm năng nguồn `website` → agent tuyển sinh chấm điểm và soạn tin tư vấn như khách nhập tay.
 
 ## Kiến trúc
 
@@ -105,7 +116,21 @@ uv run eduassist-worker                   # agent nền (hoặc --once / --agent
 cd web && npm install && npm run dev      # http://localhost:3000  (NEXT_PUBLIC_API_URL nếu API khác cổng 8000)
 ```
 
-Tài khoản demo (mật khẩu `demo123`): `quanly`, `ketoan`, `tuvan`, `nhanvien`, `giaovu`, `giangvien`, `hocvien`.
+Redis không bắt buộc khi chạy 1 tiến trình (không có `REDIS_URL` thì giới hạn lượt gọi và cache nằm trong RAM). Trên
+Windows, chạy API trên máy thì giữ `--reload`: chat async dùng psycopg async, cần SelectorEventLoop (uvicorn chỉ dùng
+loop này khi có `--reload` hoặc nhiều worker); chạy trong Docker thì không cần để ý.
+
+**Chịu tải:** test tải, cách mở rộng lên 1.000 req/s và kết quả diễn tập sự cố ở
+[`docs/SCALING_PLAN.md`](docs/SCALING_PLAN.md) và [`loadtest/README.md`](loadtest/README.md).
+
+**Nhiều trung tâm dùng chung một hệ thống (multi-tenant):** định hướng, phương án tách dữ liệu bằng Row-Level
+Security và lộ trình chuyển đổi ở [`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md) (chưa làm).
+
+**Production** (HTTPS, sao lưu, không dữ liệu demo): xem [`docs/DEPLOY.md`](docs/DEPLOY.md) và
+[`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md). `DEMO_MODE=false` tắt dữ liệu giả lập và nút demo;
+`APP_ENV=production` từ chối chạy nếu còn khoá mặc định.
+
+Tài khoản demo khi `DEMO_MODE=true` (mật khẩu `demo123`): `quanly`, `ketoan`, `tuvan`, `nhanvien`, `giaovu`, `giangvien`, `hocvien`.
 Trang đăng nhập có nút điền sẵn từng vai trò.
 
 Kịch bản demo nhanh: đăng nhập `quanly` → **Agent** → *Chạy ngay* agent công nợ → **Hộp duyệt** xem đề xuất tạm dừng
@@ -115,8 +140,8 @@ học (căn cứ, số tiền do code tính) → *Duyệt* → **Nhật ký** th
 ## Kiểm thử & đánh giá
 
 ```bash
-uv run pytest                          # 162 test: luật thuần, phân quyền, API (không cần DB/LLM)
-uv run pytest -m integration           # 40 test với Postgres thật, mỗi test rollback
+uv run pytest                          # 233 test: luật thuần, phân quyền, API (không cần DB/LLM)
+uv run pytest -m integration           # 92 test với Postgres thật (+ Redis nếu có), mỗi test rollback
 uv run eduassist-eval background       # mô phỏng 30 ngày cho agent nền (không gọi LLM, DB không đổi)
 uv run eduassist-eval all              # + các bộ eval LLM của prototype
 cd web && npm run build                # type-check + build giao diện
@@ -172,6 +197,6 @@ link bỏ qua tới nội dung, chuyển động chỉ khi không bật giảm c
   không dùng ORM SQLAlchemy như đề xuất ghi.
 - Seed xếp giảng viên/phòng theo kiểu tham lam nên ngoài cặp trùng lịch cài sẵn còn vài cặp trùng thật – agent giáo vụ
   phát hiện đúng, nhưng dữ liệu nên được làm sạch hơn.
-- Cổng thanh toán, Zalo OA: ngoài phạm vi (như đề xuất). Rate limit trong RAM (1 instance).
+- Cổng thanh toán, Zalo OA: ngoài phạm vi (như đề xuất).
 - Kiểm tra giao diện trên trình duyệt ở 1920px và 486px (không tràn ngang); chưa kiểm ở 320px, zoom 200% và bằng
   trình đọc màn hình.

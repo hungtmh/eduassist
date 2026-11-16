@@ -54,7 +54,7 @@ export function EnrollDialog({
   const [busy, setBusy] = useState(false);
 
   const { data: classes } = useSWR<{ id: number; ma_lop: string; khoa_hoc: string; si_so: number; si_so_toi_da: number; trang_thai: string }[]>(
-    open && !classId ? "/classes" : null,
+    open && !classId ? "/classes?con_mo=true" : null,
   );
   const { data: students } = useSWR<{ id: number; ho_ten: string; email: string }[]>(
     open && !studentId && q.length >= 2 ? `/students?q=${encodeURIComponent(q)}` : null,

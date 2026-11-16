@@ -1,0 +1,72 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# Một tên miền cho cả web và API. Caddy tự xin và gia hạn chứng chỉ HTTPS, tự chuyển http -> https.
+#
+# Cân bằng tải: API_UPSTREAMS / CHAT_UPSTREAMS / WEB_UPSTREAMS là danh sách địa chỉ cách nhau bằng dấu cách
+# (docker-compose.prod.yml đặt mặc định 1 bản mỗi loại). Caddy hỏi /health/live của từng bản API mỗi 5 giây,
+# bản không trả lời bị gỡ khỏi vòng chia cho tới khi sống lại; kết nối hỏng thì thử ngay bản khác trong 3 giây.
+# /health/live không đụng database: một bản API chỉ đang bận (trả 503 vì quá tải) không bị gỡ nhầm.
+(api_upstream) {
+	lb_policy least_conn
+	lb_try_duration 3s
+	health_uri /health/live
+	health_interval 5s
+	health_timeout 2s
+	fail_duration 10s
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# /api/xyz -> API nhận /xyz
+	handle_path /api/* {
+		# Số liệu vận hành chỉ cho mạng nội bộ (Prometheus hỏi thẳng api:8000/metrics)
+		@internal path /metrics
+		respond @internal 404
+
+		# Chat: dịch vụ riêng, trả lời dạng SSE -> đẩy từng mẩu ngay, không gom đệm.
+		# Mỗi câu tối đa 45 giây (CHAT_TURN_TIMEOUT_SECONDS), read_timeout để dư.
+		@chat path /chat /chat/resume /public/chat
+		handle @chat {
+			reverse_proxy {$CHAT_UPSTREAMS} {
+				import api_upstream
+				flush_interval -1
+				transport http {
+					read_timeout 2m
+				}
+			}
+		}
+
+		handle {
+			reverse_proxy {$API_UPSTREAMS} {
+				import api_upstream
+				transport http {
+					read_timeout 1m
+				}
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy {$WEB_UPSTREAMS} {
+			lb_policy least_conn
+			lb_try_duration 3s
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

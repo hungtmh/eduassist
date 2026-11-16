@@ -3,21 +3,27 @@
 PHÂN QUYỀN NẰM Ở ĐÂY, TRONG CODE: mỗi vai trò có một graph riêng chỉ chứa các tool được phép.
 Học viên không có tool ask_analytics / ask_action, nên dù prompt injection thế nào LLM cũng
 không thể gọi tới - tool đó đơn giản là không tồn tại trong graph của họ.
+
+Mỗi graph có hai bản cùng tool, cùng middleware: build_supervisor (đồng bộ: CLI, eval) và abuild_supervisor (async:
+chat của API). Tool giao việc cho agent con có cả hai cách chạy: bản async `await agent.ainvoke(...)` nên một lượt chat
+chờ LLM không giữ luồng nào; tool lá (SQL, RAG) vẫn là hàm thường, LangChain chạy chúng trong thread pool vài mili-giây.
 """
 
+import asyncio
 import uuid
 from functools import lru_cache
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelRequest, PIIMiddleware, ToolCallLimitMiddleware, dynamic_prompt
+from langchain.agents.middleware import AgentMiddleware, ModelRequest, PIIMiddleware, ToolCallLimitMiddleware
 from langchain.tools import ToolRuntime
+from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 
 from eduassist.agents.action import build_action_agent
 from eduassist.agents.advisor import build_advisor_agent
 from eduassist.agents.analytics import build_analytics_agent, task_with_examples
 from eduassist.agents.context import ROLE_LABEL, Role, UserContext, emit
-from eduassist.agents.persistence import get_checkpointer, get_store, memory_namespace
+from eduassist.agents.persistence import get_async_checkpointer, get_checkpointer, get_store, memory_namespace
 from eduassist.config import get_settings
 from eduassist.db import app_pool
 from eduassist.formatting import fold, is_refusal
@@ -51,18 +57,18 @@ TOOL_GUIDE = {
     "ask_advisor": "- ask_advisor: chính sách, học phí, ưu đãi, khoá học, lịch khai giảng, tư vấn lộ trình.",
     "ask_advisor_student": "- ask_advisor: chính sách, học phí, ưu đãi, khoá học, lịch khai giảng, tư vấn lộ trình,"
     " các lớp chính người dùng đã đăng ký và học phí còn nợ.",
-    "ask_analytics": "- ask_analytics: số liệu kinh doanh, doanh thu, công nợ, danh sách học viên/lớp (có id, email).",
+    "ask_analytics": "- ask_analytics: số liệu kinh doanh, doanh thu, công nợ, danh sách học viên/lớp"
+    " (có id; email và SĐT được che).",
     "ask_action": "- ask_action: gửi email, cấp mã giảm giá, NHẮC NỢ HỌC PHÍ. Nhắc nợ: gọi ask_action THẲNG"
     " (agent vận hành tự tính công nợ, tự gửi từng người) - KHÔNG hỏi ask_analytics lấy danh sách trước,"
     " KHÔNG chép danh sách người nợ vào task; chỉ truyền phạm vi (tất cả / hoc_vien_id cụ thể) và hạn thanh toán"
-    " nếu người dùng có nói. Việc khác: truyền ĐỦ người nhận (email hoặc hoc_vien_id), nội dung, mức giảm;"
+    " nếu người dùng có nói. Việc khác: truyền ĐỦ người nhận (hoc_vien_id / id khách; email chỉ khi người dùng"
+    " tự gõ), nội dung, mức giảm;"
     " cần tra danh sách người nhận thì hỏi ask_analytics TRƯỚC.",
 }
 
 
-def _run_subagent(name: str, agent, task: str, runtime: ToolRuntime[UserContext]) -> str:
-    emit("agent_start", agent=name, task=task)
-    result = agent.invoke({"messages": [{"role": "user", "content": task}]}, context=runtime.context)
+def _subagent_answer(name: str, result: dict) -> str:
     answer = result["messages"][-1].content
     emit("agent_end", agent=name)
     if name == "action":
@@ -73,6 +79,24 @@ def _run_subagent(name: str, agent, task: str, runtime: ToolRuntime[UserContext]
             answer += "\n\nKẾT QUẢ THAO TÁC (do hệ thống ghi, đây là sự thật):\n" + "\n".join(f"- {d}" for d in done)
     # Ngoài ra chỉ trả câu trả lời CUỐI: context của supervisor gọn, không lẫn các bước nội bộ của agent con
     return answer
+
+
+def _run_subagent(name: str, agent, task: str, runtime: ToolRuntime[UserContext]) -> str:
+    emit("agent_start", agent=name, task=task)
+    result = agent.invoke({"messages": [{"role": "user", "content": task}]}, context=runtime.context)
+    return _subagent_answer(name, result)
+
+
+async def _arun_subagent(name: str, agent, task: str, runtime: ToolRuntime[UserContext]) -> str:
+    emit("agent_start", agent=name, task=task)
+    result = await agent.ainvoke({"messages": [{"role": "user", "content": task}]}, context=runtime.context)
+    return _subagent_answer(name, result)
+
+
+def _also_async(sync_tool, coroutine):
+    """Gắn bản async cho tool: graph async gọi coroutine, graph đồng bộ gọi hàm thường."""
+    sync_tool.coroutine = coroutine
+    return sync_tool
 
 
 @lru_cache
@@ -105,21 +129,38 @@ def known_sources() -> dict[str, str]:
     return {fold(n): n for n in names}
 
 
+def _record_gap(question: str, ctx: UserContext) -> None:
+    with app_pool().connection() as conn:
+        conn.execute(
+            "INSERT INTO knowledge_gap (question, user_id, role) VALUES (%s, %s, %s)",
+            (question, ctx.user_id, ctx.role),
+        )
+
+
+def _advisor_followup(answer: str) -> bool:
+    """Gửi nguồn đã kiểm chứng cho giao diện; trả True nếu là câu từ chối (lỗ hổng tài liệu cần ghi lại)."""
+    sources = verified_sources(answer)
+    if sources:
+        emit("sources", items=sources)
+    return is_refusal(answer)
+
+
 @tool
 def ask_advisor(question: str, runtime: ToolRuntime[UserContext]) -> str:
     """Hỏi agent tư vấn về chính sách, học phí, ưu đãi, khoá học, lịch khai giảng, lộ trình học.
     Truyền câu hỏi đầy đủ ngữ cảnh (VD: đối tượng, mục tiêu, thời gian rảnh)."""
     agent = _subagents(runtime.context.role == "student")["advisor"]
     answer = _run_subagent("advisor", agent, question, runtime)
-    sources = verified_sources(answer)
-    if sources:
-        emit("sources", items=sources)
-    if is_refusal(answer):  # lỗ hổng tài liệu -> báo cáo định kỳ cho nhân viên bổ sung
-        with app_pool().connection() as conn:
-            conn.execute(
-                "INSERT INTO knowledge_gap (question, user_id, role) VALUES (%s, %s, %s)",
-                (question, runtime.context.user_id, runtime.context.role),
-            )
+    if _advisor_followup(answer):  # lỗ hổng tài liệu -> báo cáo định kỳ cho nhân viên bổ sung
+        _record_gap(question, runtime.context)
+    return answer
+
+
+async def _ask_advisor_async(question: str, runtime: ToolRuntime[UserContext]) -> str:
+    agent = _subagents(runtime.context.role == "student")["advisor"]
+    answer = await _arun_subagent("advisor", agent, question, runtime)
+    if _advisor_followup(answer):  # known_sources() đã cache sau lần đầu: không đụng DB
+        await asyncio.to_thread(_record_gap, question, runtime.context)
     return answer
 
 
@@ -130,6 +171,11 @@ def ask_analytics(question: str, runtime: ToolRuntime[UserContext]) -> str:
     return _run_subagent("analytics", _subagents(False)["analytics"], task_with_examples(question), runtime)
 
 
+async def _ask_analytics_async(question: str, runtime: ToolRuntime[UserContext]) -> str:
+    task = await asyncio.to_thread(task_with_examples, question)  # tìm ví dụ SQL tương tự: embedding + DB
+    return await _arun_subagent("analytics", _subagents(False)["analytics"], task, runtime)
+
+
 @tool
 def ask_action(task: str, runtime: ToolRuntime[UserContext]) -> str:
     """Giao việc cho agent vận hành: gửi email, cấp mã giảm giá. Mô tả đầy đủ người nhận và nội dung.
@@ -137,19 +183,45 @@ def ask_action(task: str, runtime: ToolRuntime[UserContext]) -> str:
     return _run_subagent("action", _subagents(False)["action"], task, runtime)
 
 
+async def _ask_action_async(task: str, runtime: ToolRuntime[UserContext]) -> str:
+    return await _arun_subagent("action", _subagents(False)["action"], task, runtime)
+
+
 @tool
 def remember_user_fact(fact: str, runtime: ToolRuntime[UserContext]) -> str:
     """Ghi nhớ lâu dài MỘT thông tin ngắn về người dùng (VD: "Con đang học lớp 8, muốn học buổi tối")."""
-    get_store().put(memory_namespace(runtime.context.user_id), str(uuid.uuid4()), {"fact": fact[:300]})
+    runtime.store.put(memory_namespace(runtime.context.user_id), str(uuid.uuid4()), {"fact": fact[:300]})
     emit("memory", fact=fact)
     return "Đã ghi nhớ."
 
 
-@dynamic_prompt
-def supervisor_prompt(request: ModelRequest) -> str:
-    ctx: UserContext = request.runtime.context
-    items = get_store().search(memory_namespace(ctx.user_id), limit=MAX_MEMORIES_IN_PROMPT)
-    return render_supervisor_prompt(ctx, [it.value["fact"] for it in items])
+async def _remember_user_fact_async(fact: str, runtime: ToolRuntime[UserContext]) -> str:
+    await runtime.store.aput(memory_namespace(runtime.context.user_id), str(uuid.uuid4()), {"fact": fact[:300]})
+    emit("memory", fact=fact)
+    return "Đã ghi nhớ."
+
+
+_also_async(ask_advisor, _ask_advisor_async)
+_also_async(ask_analytics, _ask_analytics_async)
+_also_async(ask_action, _ask_action_async)
+_also_async(remember_user_fact, _remember_user_fact_async)
+
+
+class SupervisorPrompt(AgentMiddleware):
+    """Prompt hệ thống kèm điều đã nhớ về người dùng. Bản async đọc bộ nhớ không chặn event loop."""
+
+    def _apply(self, request: ModelRequest, items) -> ModelRequest:
+        prompt = render_supervisor_prompt(request.runtime.context, [it.value["fact"] for it in items])
+        return request.override(system_message=SystemMessage(content=prompt))
+
+    def wrap_model_call(self, request, handler):
+        ns = memory_namespace(request.runtime.context.user_id)
+        return handler(self._apply(request, request.runtime.store.search(ns, limit=MAX_MEMORIES_IN_PROMPT)))
+
+    async def awrap_model_call(self, request, handler):
+        ns = memory_namespace(request.runtime.context.user_id)
+        items = await request.runtime.store.asearch(ns, limit=MAX_MEMORIES_IN_PROMPT)
+        return await handler(self._apply(request, items))
 
 
 def render_supervisor_prompt(ctx: UserContext, facts: list[str]) -> str:
@@ -178,10 +250,9 @@ ROLE_TOOLS = {
 }
 
 
-@lru_cache
-def build_supervisor(role: Role):
+def _middleware(role: Role) -> list:
     middleware = [
-        supervisor_prompt,
+        SupervisorPrompt(),
         *resilience_middleware(),
         ToolCallLimitMiddleware(run_limit=get_settings().max_tool_calls_per_turn),
     ]
@@ -193,12 +264,33 @@ def build_supervisor(role: Role):
                 "phone_vn", detector=r"\b0\d{9}\b", strategy="mask", apply_to_input=False, apply_to_output=True
             ),
         ]
+    return middleware
+
+
+def _create(role: Role, checkpointer):
     return create_agent(
         chat_model(),
         tools=ROLE_TOOLS[role],
         context_schema=UserContext,
-        middleware=middleware,
-        checkpointer=get_checkpointer(),
+        middleware=_middleware(role),
+        checkpointer=checkpointer,
         store=get_store(),
         name=f"supervisor_{role}",
     )
+
+
+@lru_cache
+def build_supervisor(role: Role):
+    return _create(role, get_checkpointer())
+
+
+_async_graphs: dict = {}
+
+
+async def abuild_supervisor(role: Role):
+    """Graph cho chat async: cùng tool và middleware, checkpointer async (pool async của event loop hiện tại)."""
+    saver = await get_async_checkpointer()
+    key = (role, id(saver))
+    if key not in _async_graphs:
+        _async_graphs[key] = _create(role, saver)
+    return _async_graphs[key]

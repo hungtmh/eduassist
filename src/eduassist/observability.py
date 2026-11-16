@@ -60,3 +60,19 @@ def record_feedback(run_id: str, score: int, comment: str | None) -> None:
         )
     except Exception:
         log.warning("Không gửi được feedback lên Langfuse", exc_info=True)
+
+
+def init_sentry(component: str) -> None:
+    """Báo lỗi lên Sentry nếu đặt SENTRY_DSN (tuỳ chọn, cần nhóm dependency obs).
+    send_default_pii=False: không gửi IP, cookie, header Authorization, nội dung request."""
+    s = get_settings()
+    if not s.sentry_dsn:
+        return
+    try:
+        import sentry_sdk
+    except ImportError:
+        log.warning("SENTRY_DSN đã đặt nhưng chưa cài sentry-sdk (uv sync --group obs) - bỏ qua")
+        return
+    sentry_sdk.init(
+        dsn=s.sentry_dsn, environment=s.app_env, send_default_pii=False, traces_sample_rate=0.0, server_name=component
+    )

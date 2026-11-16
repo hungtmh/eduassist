@@ -29,8 +29,10 @@ Bạn thực hiện thao tác theo yêu cầu của nhân viên:
   Hệ thống tự tính công nợ, tự điền tên + số tiền vào từng email; bạn chỉ truyền hạn thanh toán và (nếu được
   chỉ định) danh sách hoc_vien_id. Không chỉ định ai -> bỏ trống để gửi cho TẤT CẢ học viên đang nợ.
   Không được nêu hạn thanh toán -> dùng ngày {default_deadline}.
-- get_student_contacts: lấy họ tên + email học viên theo danh sách hoc_vien_id.
-- send_email: gửi email. Viết tiếng Việt lịch sự, xưng "Trung tâm", ký tên "Trung tâm Đào tạo Ánh Dương".
+- get_student_contacts: kiểm tra họ tên học viên theo hoc_vien_id và học viên đã có email chưa.
+- send_email: gửi email. Chỉ định người nhận bằng hoc_vien_ids / khach_ids, hệ thống tự điền địa chỉ (bạn không
+  thấy địa chỉ email - đó là chủ ý bảo vệ dữ liệu cá nhân). Chỉ dùng tham số emails cho địa chỉ người dùng tự gõ.
+  Viết tiếng Việt lịch sự, xưng "Trung tâm", ký tên "Trung tâm Đào tạo Ánh Dương".
   Mỗi học viên một email riêng nếu nội dung có thông tin cá nhân (VD: số tiền nợ của từng người).
 - create_voucher: cấp mã giảm giá cho một học viên.
 Đủ thông tin thì GỌI TOOL NGAY. Gọi tool chỉ TẠO ĐỀ XUẤT: hệ thống tự hiện nút Duyệt / Từ chối cho người dùng,
@@ -128,36 +130,73 @@ def send_payment_reminders(
 
 @tool
 def get_student_contacts(hoc_vien_ids: list[int]) -> str:
-    """Lấy họ tên và email của các học viên theo id."""
+    """Kiểm tra học viên theo id: họ tên và đã có email chưa (địa chỉ email không hiện ra, hệ thống tự điền)."""
     with app_pool().connection() as conn:
         rows = conn.execute(
             "SELECT id, ho_ten, email FROM hoc_vien WHERE id = ANY(%s) ORDER BY id", (hoc_vien_ids[:MAX_RECIPIENTS],)
         ).fetchall()
-    return "\n".join(f"- id {r['id']}: {r['ho_ten']} <{r['email']}>" for r in rows) or "Không tìm thấy học viên nào."
+    return (
+        "\n".join(f"- id {r['id']}: {r['ho_ten']} ({'có email' if r['email'] else 'CHƯA có email'})" for r in rows)
+        or "Không tìm thấy học viên nào."
+    )
 
 
-@tool
-def send_email(recipients: list[str], subject: str, body: str, runtime: ToolRuntime[UserContext]) -> str:
-    """Gửi MỘT email tới danh sách người nhận (tối đa 50 địa chỉ của học viên/khách trong hệ thống).
-    Tạo đề xuất chờ duyệt."""
-    recipients = [r.strip().lower() for r in recipients]
-    if not 1 <= len(recipients) <= MAX_RECIPIENTS:
-        return f"LỖI: số người nhận phải từ 1 đến {MAX_RECIPIENTS}."
-    with app_pool().connection() as conn:
+def resolve_recipients(
+    conn, hoc_vien_ids: list[int], khach_ids: list[int], emails: list[str]
+) -> tuple[list[str], list[str]]:
+    """(địa chỉ email lấy từ DB, lỗi). Email LLM tự gõ chỉ chấp nhận nếu thuộc học viên / khách trong hệ thống."""
+    errors: list[str] = []
+    found: list[str] = []
+    if hoc_vien_ids:
+        rows = conn.execute("SELECT id, email FROM hoc_vien WHERE id = ANY(%s)", (hoc_vien_ids,)).fetchall()
+        by_id = {r["id"]: r["email"] for r in rows}
+        missing = [i for i in hoc_vien_ids if not by_id.get(i)]
+        if missing:
+            errors.append(f"học viên id {', '.join(map(str, missing))} không có hoặc chưa có email")
+        found += [by_id[i] for i in hoc_vien_ids if by_id.get(i)]
+    if khach_ids:
+        rows = conn.execute("SELECT id, email FROM khach_tiem_nang WHERE id = ANY(%s)", (khach_ids,)).fetchall()
+        by_id = {r["id"]: r["email"] for r in rows}
+        missing = [i for i in khach_ids if not by_id.get(i)]
+        if missing:
+            errors.append(f"khách id {', '.join(map(str, missing))} không có hoặc chưa có email")
+        found += [by_id[i] for i in khach_ids if by_id.get(i)]
+    if emails:
+        typed = [e.strip().lower() for e in emails]
         known = {
             r["email"]
             for r in conn.execute(
                 """SELECT lower(email) AS email FROM hoc_vien WHERE lower(email) = ANY(%(e)s)
                    UNION SELECT lower(email) FROM khach_tiem_nang WHERE lower(email) = ANY(%(e)s)""",
-                {"e": recipients},
+                {"e": typed},
             ).fetchall()
         }
-    unknown = [r for r in recipients if r not in known]
-    if unknown:  # báo LLM ngay để nó tự sửa (tầng Service cũng kiểm tra lại lúc thực thi)
-        return (
-            f"LỖI: không phải email của học viên trong hệ thống: {', '.join(unknown)}. "
-            "Dùng get_student_contacts để lấy đúng địa chỉ. Chưa có email nào được gửi."
-        )
+        unknown = [e for e in typed if e not in known]
+        if unknown:
+            errors.append(f"không phải email của học viên/khách trong hệ thống: {', '.join(unknown)}")
+        found += [e for e in typed if e in known]
+    unique = list(dict.fromkeys(e.strip().lower() for e in found))
+    return unique, errors
+
+
+@tool
+def send_email(
+    subject: str,
+    body: str,
+    runtime: ToolRuntime[UserContext],
+    hoc_vien_ids: list[int] | None = None,
+    khach_ids: list[int] | None = None,
+    emails: list[str] | None = None,
+) -> str:
+    """Gửi MỘT email (tối đa 50 người nhận). Chỉ định người nhận bằng hoc_vien_ids và/hoặc khach_ids (id khách
+    tiềm năng) - hệ thống tự lấy địa chỉ email. emails: chỉ dùng cho địa chỉ người dùng tự gõ trong yêu cầu.
+    Tạo đề xuất chờ duyệt."""
+    with app_pool().connection() as conn:
+        recipients, errors = resolve_recipients(conn, hoc_vien_ids or [], khach_ids or [], emails or [])
+    if errors:  # báo LLM ngay để nó tự sửa (tầng Service cũng kiểm tra lại lúc thực thi)
+        return f"LỖI: {'; '.join(errors)}. Chưa có email nào được gửi."
+    if not 1 <= len(recipients) <= MAX_RECIPIENTS:
+        return f"LỖI: số người nhận phải từ 1 đến {MAX_RECIPIENTS}."
     return _submit(
         runtime.context,
         "gui_email",

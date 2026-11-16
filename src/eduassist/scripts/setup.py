@@ -2,10 +2,15 @@
 
 uv run eduassist-setup            # idempotent: chỉ seed khi DB trống hoặc chưa có dữ liệu nền tảng
 uv run eduassist-setup --reset    # xoá & seed lại toàn bộ dữ liệu nghiệp vụ (theo ngày hôm nay)
+
+DEMO_MODE=false (production): KHÔNG seed dữ liệu giả. Thay vào đó tạo tài khoản quản lý đầu tiên từ
+ADMIN_USERNAME / ADMIN_NAME / ADMIN_EMAIL / ADMIN_PASSWORD (bỏ trống mật khẩu -> sinh mật khẩu tạm, in ra một lần),
+và khoá mọi tài khoản demo còn dùng mật khẩu demo123.
 """
 
 import argparse
 import logging
+import os
 from datetime import date
 from pathlib import Path
 
@@ -13,8 +18,9 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
+from eduassist import cache
 from eduassist.config import get_settings
-from eduassist.security.passwords import hash_password
+from eduassist.security.passwords import hash_password, verify_password
 from eduassist.security.sql_runner import AGENT_READABLE_TABLES
 from eduassist.seed.generate import DEMO_USERS, generate
 from eduassist.seed.platform import seed_platform
@@ -86,6 +92,41 @@ def ensure_readonly_role(conn: psycopg.Connection) -> None:
     log.info("role agent_ro ok (SELECT trên: %s)", ", ".join(tables))
 
 
+def ensure_app_role_limits(conn: psycopg.Connection) -> None:
+    """Timeout mặc định cho mọi phiên của role ứng dụng, đặt ở chính database.
+
+    Kết nối thẳng thì pool đã gửi các giá trị này lúc mở kết nối; qua PgBouncer (chế độ transaction) thì không gửi
+    được, nên phải đặt ở role. Phiên quản trị (setup, migration, pg_dump) tự tắt timeout cho phiên của mình.
+    """
+    s = get_settings()
+    role = conn.info.user
+    for name, value in (
+        ("statement_timeout", f"{int(s.db_statement_timeout_ms)}ms"),
+        ("lock_timeout", f"{int(s.db_lock_timeout_ms)}ms"),
+        ("idle_in_transaction_session_timeout", f"{int(s.db_idle_in_transaction_timeout_ms)}ms"),
+    ):
+        conn.execute(
+            sql.SQL("ALTER ROLE {} SET {} = {}").format(sql.Identifier(role), sql.SQL(name), sql.Literal(value))
+        )
+    log.info(
+        "role %s: statement_timeout=%sms, lock_timeout=%sms, idle_in_transaction_session_timeout=%sms",
+        role,
+        s.db_statement_timeout_ms,
+        s.db_lock_timeout_ms,
+        s.db_idle_in_transaction_timeout_ms,
+    )
+
+
+def ensure_query_stats(conn: psycopg.Connection) -> None:
+    """Thống kê truy vấn (tìm truy vấn chậm). Cần shared_preload_libraries=pg_stat_statements (docker-compose)."""
+    try:
+        with conn.transaction():
+            conn.execute("CREATE EXTENSION IF NOT EXISTS pg_stat_statements")
+        log.info("pg_stat_statements ok")
+    except psycopg.Error as e:
+        log.warning("không bật được pg_stat_statements (thiếu quyền hoặc chưa nạp thư viện): %s", e)
+
+
 def _needs_seed(conn) -> bool:
     has_base = conn.execute("SELECT count(*) AS n FROM khoa_hoc").fetchone()["n"] > 0
     has_platform = conn.execute("SELECT count(*) AS n FROM co_so").fetchone()["n"] > 0
@@ -150,6 +191,37 @@ def _link_demo_accounts(conn) -> None:
         )
 
 
+def disable_demo_accounts(conn) -> None:
+    """Production: tài khoản demo còn mật khẩu demo123 thì khoá lại (đăng xuất luôn mọi phiên)."""
+    for username, password, *_ in DEMO_USERS:
+        row = conn.execute("SELECT password_hash FROM app_user WHERE username = %s AND active", (username,)).fetchone()
+        if row and verify_password(password, row["password_hash"]):
+            conn.execute(
+                "UPDATE app_user SET active = false, token_version = token_version + 1 WHERE username = %s",
+                (username,),
+            )
+            cache.account_changed(conn, username)
+            log.warning("đã khoá tài khoản demo '%s' (còn mật khẩu mặc định)", username)
+
+
+def ensure_admin(conn) -> None:
+    from eduassist.services.accounts import bootstrap_manager
+
+    username = os.getenv("ADMIN_USERNAME", "quantri")
+    temp = bootstrap_manager(
+        conn,
+        username,
+        os.getenv("ADMIN_NAME", "Quản trị viên"),
+        os.getenv("ADMIN_EMAIL") or None,
+        os.getenv("ADMIN_PASSWORD") or None,
+    )
+    if temp:
+        # In ra stdout MỘT lần (không ghi log file); người dùng phải đổi ở lần đăng nhập đầu
+        print(f"\n=== Tài khoản quản lý đầu tiên: {username} / mật khẩu tạm: {temp} (đổi ngay khi đăng nhập) ===\n")
+    elif conn.execute("SELECT 1 FROM app_user WHERE username = %s", (username,)).fetchone():
+        log.info("tài khoản quản lý '%s' ok", username)
+
+
 def setup_langgraph() -> None:
     from langgraph.checkpoint.postgres import PostgresSaver
     from langgraph.store.postgres import PostgresStore
@@ -169,10 +241,29 @@ def main() -> None:
     parser.add_argument("--skip-ingest", action="store_true", help="không tạo embedding cho tài liệu / ví dụ SQL")
     args = parser.parse_args()
 
+    s = get_settings()
+    if args.reset and not s.demo_mode:
+        parser.error("--reset xoá toàn bộ dữ liệu nghiệp vụ, chỉ dùng khi DEMO_MODE=true")
     migrate()
-    with psycopg.connect(get_settings().database_url, autocommit=True, row_factory=dict_row) as conn:
+    # Phiên quản trị: không giới hạn thời gian (seed, tạo index trên bảng lớn có thể chạy lâu)
+    with psycopg.connect(
+        s.database_url,
+        autocommit=True,
+        row_factory=dict_row,
+        options="-c statement_timeout=0 -c lock_timeout=0 -c idle_in_transaction_session_timeout=0",
+    ) as conn:
         ensure_readonly_role(conn)
-        seed(conn, args.reset)
+        ensure_app_role_limits(conn)
+        ensure_query_stats(conn)
+        if s.demo_mode:
+            seed(conn, args.reset)
+            from eduassist.seed.course_content import fill_public_content
+
+            log.info("nội dung web công khai (demo): %d khoá học", fill_public_content(conn))
+        else:
+            log.info("DEMO_MODE=false: không seed dữ liệu giả lập")
+            disable_demo_accounts(conn)
+            ensure_admin(conn)
         from eduassist.services.proposals import ensure_default_policies
 
         ensure_default_policies(conn)

@@ -1,12 +1,10 @@
 "use client";
 
-import { Bot } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
-import useSWR from "swr";
 import { ProposalDetail } from "@/components/proposal";
 import {
-  Badge,
+  Avatar,
   Button,
   Card,
   Dialog,
@@ -19,8 +17,10 @@ import {
   StatusBadge,
   cx,
   useToast,
+  LoadMore,
 } from "@/components/ui";
 import { api } from "@/lib/api";
+import { usePaged } from "@/lib/use-paged";
 import { fmtDateTime } from "@/lib/format";
 import { AGENT_LABEL, PROPOSAL_STATUS } from "@/lib/labels";
 
@@ -49,7 +49,8 @@ function Inbox() {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const qs = new URLSearchParams({ trang_thai: filter === "all" ? "" : filter, ...(agent ? { agent } : {}) });
-  const { data, error, mutate } = useSWR<Row[]>(`/proposals?${qs}`);
+  const list = usePaged<Row>(`/proposals?${qs}`, 50);
+  const { items: data, error, mutate } = list;
   const selected = Number(params.get("id")) || data?.[0]?.id || null;
 
   const select = (id: number) => router.replace(`/inbox?id=${id}`, { scroll: false });
@@ -74,8 +75,9 @@ function Inbox() {
   return (
     <>
       <PageHeader
+        eyebrow="Vận hành"
         title="Hộp duyệt"
-        description="Mọi việc agent đề xuất. Việc trong hạn mức L2 đã tự thực hiện và nằm ở đây để xem lại; việc L1 chờ người có quyền quyết định."
+        description="Mọi việc agent đề xuất. Việc L1 chờ người có quyền quyết định; việc trong hạn mức L2 đã tự làm và nằm đây để bạn xem lại."
         actions={
           picked.size > 0 && (
             <Button variant="primary" onClick={() => setConfirm(true)}>
@@ -138,7 +140,7 @@ function Inbox() {
             <ul aria-label="Danh sách đề xuất">
               {data.map((r) => (
                 <li key={r.id} className="border-b border-line last:border-0">
-                  <div className={cx("flex items-start gap-3 px-3 py-3", selected === r.id && "bg-accent-subtle")}>
+                  <div className={cx("relative flex items-start gap-3 px-3 py-3", selected === r.id ? "bg-accent-subtle before:absolute before:inset-y-0 before:start-0 before:w-[3px] before:bg-accent-solid" : "hover:bg-surface-hover")}>
                     {r.co_the_duyet ? (
                       <input
                         type="checkbox"
@@ -158,18 +160,19 @@ function Inbox() {
                     <button
                       onClick={() => select(r.id)}
                       aria-current={selected === r.id ? "true" : undefined}
-                      className="min-w-0 flex-1 text-start"
+                      className="flex min-w-0 flex-1 items-start gap-2.5 text-start"
                     >
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        <Badge tone="agent">
-                          <Bot className="size-3" aria-hidden />
-                          {AGENT_LABEL[r.agent] ?? r.agent}
-                        </Badge>
-                        <StatusBadge map={PROPOSAL_STATUS} value={r.trang_thai} />
-                      </span>
-                      <span className="mt-1.5 block font-medium text-pretty">{r.tieu_de}</span>
-                      <span className="mt-0.5 block text-xs text-fg-tertiary">
-                        {r.ten_hanh_dong} · {fmtDateTime(r.created_at)}
+                      <Avatar name={AGENT_LABEL[r.agent] ?? r.agent} agent size="sm" />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-xs font-semibold text-agent-fg">Agent {(AGENT_LABEL[r.agent] ?? r.agent).toLowerCase()}</span>
+                          <span className="num shrink-0 text-[0.6875rem] text-fg-tertiary">{fmtDateTime(r.created_at)}</span>
+                        </span>
+                        <span className={cx("mt-0.5 block text-pretty", r.trang_thai === "cho_duyet" ? "font-semibold" : "font-medium")}>{r.tieu_de}</span>
+                        <span className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-fg-tertiary">
+                          <StatusBadge map={PROPOSAL_STATUS} value={r.trang_thai} />
+                          {r.ten_hanh_dong}
+                        </span>
                       </span>
                     </button>
                   </div>
@@ -207,6 +210,9 @@ function Inbox() {
           {picked.size > 8 && <li>… và {picked.size - 8} đề xuất khác</li>}
         </ul>
       </Dialog>
+      {data && (
+        <LoadMore shown={data.length} total={list.total} noun="đề xuất" hasMore={list.hasMore} loading={list.loadingMore} onMore={list.loadMore} />
+      )}
     </>
   );
 }

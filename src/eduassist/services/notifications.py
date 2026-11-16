@@ -7,6 +7,7 @@ giới hạn số người nhận mỗi đợt.
 import logging
 import re
 import smtplib
+import ssl
 from contextvars import ContextVar
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -42,8 +43,15 @@ def _deliver(mails: list[Mail]) -> None:
     if box is not None:
         box.extend(mails)
         return
+    if not mails:
+        return
     s = get_settings()
-    with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=10) as smtp:
+    smtp_cls = smtplib.SMTP_SSL if s.smtp_security == "ssl" else smtplib.SMTP
+    with smtp_cls(s.smtp_host, s.smtp_port, timeout=15) as smtp:
+        if s.smtp_security == "starttls":
+            smtp.starttls(context=ssl.create_default_context())
+        if s.smtp_user:
+            smtp.login(s.smtp_user, s.smtp_password.get_secret_value())
         for m in mails:
             msg = EmailMessage()
             msg["From"] = s.smtp_from
@@ -162,3 +170,24 @@ def mark_read(conn, actor: Actor, ids: list[int]) -> None:
         "UPDATE thong_bao SET da_doc = true WHERE id = ANY(%s) AND (nguoi_nhan = %s OR nguoi_nhan = %s)",
         (ids, actor.id, f"role:{actor.role}"),
     )
+
+
+def send_system_email(
+    conn, to: str, subject: str, body: str, kind: str, logged_body: str | None = None, hoc_vien_id: int | None = None
+) -> str | None:
+    """Email hệ thống (kích hoạt tài khoản, đặt lại mật khẩu). Không cần quyền email.send: người dùng tự yêu cầu.
+    logged_body: nội dung ghi vào email_log - truyền bản đã ẩn link/token để người xem log không dùng lại được.
+    Trả về thông báo lỗi (None nếu gửi được); không raise để không làm hỏng thao tác chính."""
+    if not EMAIL_RE.match(to or ""):
+        return "Địa chỉ email không hợp lệ."
+    try:
+        _deliver([Mail(to, subject, body)])
+    except OSError as e:  # gồm cả smtplib.SMTPException
+        log.warning("không gửi được email hệ thống %s tới %s: %s", kind, to, e)
+        return "Chưa gửi được email (lỗi máy chủ email)."
+    conn.execute(
+        """INSERT INTO email_log (recipients, subject, body, sent_by, loai, hoc_vien_id, sent_at)
+           VALUES (%s, %s, %s, 'system', %s, %s, %s)""",
+        ([to], subject, logged_body if logged_body is not None else body, kind, hoc_vien_id, now()),
+    )
+    return None

@@ -10,12 +10,14 @@ from eduassist.services import rules
 from eduassist.services.core import (
     Actor,
     Conflict,
+    Page,
     RuleViolation,
     audit,
     check_transition,
     emit_event,
     now,
     one,
+    paginate,
     require,
     today,
 )
@@ -30,7 +32,15 @@ LEFT JOIN app_user u ON u.username = k.phu_trach
 """
 
 
-def list_leads(conn, actor: Actor, status: str | None = None, owner: str | None = None, q: str | None = None):
+def list_leads(
+    conn,
+    actor: Actor,
+    status: str | None = None,
+    owner: str | None = None,
+    q: str | None = None,
+    limit: int = 300,
+    offset: int = 0,
+) -> Page:
     require(actor, "lead.read")
     where, params = ["true"], {"today": today()}
     if status:
@@ -42,10 +52,29 @@ def list_leads(conn, actor: Actor, status: str | None = None, owner: str | None 
     if q:
         where.append("(k.ho_ten ILIKE %(q)s OR k.so_dien_thoai ILIKE %(q)s OR k.email ILIKE %(q)s)")
         params["q"] = f"%{q}%"
-    return conn.execute(
-        LEAD_SQL + " WHERE " + " AND ".join(where) + " ORDER BY k.diem DESC NULLS LAST, k.created_at DESC LIMIT 300",
+    return paginate(
+        conn,
+        LEAD_SQL + " WHERE " + " AND ".join(where),
         params,
+        # Khách quá 3 ngày chưa ai liên hệ lên đầu (việc gấp nhất), rồi theo điểm
+        "(trang_thai = 'moi' AND lien_he_cuoi IS NULL AND so_ngay > 3) DESC, diem DESC NULLS LAST, created_at DESC, id DESC",
+        limit,
+        offset,
+    )
+
+
+def lead_counts(conn, actor: Actor) -> dict:
+    """Số khách theo trạng thái (đếm trên toàn bộ dữ liệu, không theo trang)."""
+    require(actor, "lead.read")
+    rows = conn.execute(
+        """SELECT trang_thai, count(*)::int AS n,
+                  count(*) FILTER (WHERE trang_thai = 'moi' AND lien_he_cuoi IS NULL
+                                   AND %s - created_at::date > 3)::int AS cham
+           FROM khach_tiem_nang GROUP BY trang_thai""",
+        (today(),),
     ).fetchall()
+    by = {r["trang_thai"]: r["n"] for r in rows}
+    return {"tong": sum(by.values()), "theo_trang_thai": by, "qua_han_lien_he": sum(r["cham"] for r in rows)}
 
 
 def get_lead(conn, actor: Actor, lead_id: int) -> dict:
@@ -264,15 +293,18 @@ def create_task(
     return row["id"] if row else None
 
 
-def list_tasks(conn, actor: Actor, mine: bool = True, status: str = "mo") -> list[dict]:
+def list_tasks(conn, actor: Actor, mine: bool = True, status: str = "mo", limit: int = 200, offset: int = 0) -> Page:
     require(actor, "task.read")
-    return conn.execute(
+    return paginate(
+        conn,
         """SELECT v.*, k.ho_ten AS ten_khach FROM viec_can_lam v
            LEFT JOIN khach_tiem_nang k ON v.loai_doi_tuong = 'khach_tiem_nang' AND k.id = v.doi_tuong_id
-           WHERE v.trang_thai = %s AND (NOT %s OR v.nguoi_phu_trach = %s)
-           ORDER BY v.han, v.id LIMIT 200""",
-        (status, mine, actor.id),
-    ).fetchall()
+           WHERE v.trang_thai = %(st)s AND (NOT %(mine)s OR v.nguoi_phu_trach = %(me)s)""",
+        {"st": status, "mine": mine, "me": actor.id},
+        "han, id",
+        limit,
+        offset,
+    )
 
 
 def complete_task(conn, actor: Actor, task_id: int) -> None:

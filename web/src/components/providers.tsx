@@ -13,6 +13,7 @@ export type Profile = {
   hoc_vien_id: number | null;
   giang_vien_id: number | null;
   permissions: string[];
+  must_change_password: boolean;
 };
 
 type AuthState = {
@@ -27,10 +28,10 @@ const AuthCtx = createContext<AuthState>(null as unknown as AuthState);
 export const useAuth = () => useContext(AuthCtx);
 
 export function homeFor(u: Profile): string {
+  if (u.must_change_password) return "/doi-mat-khau";
   if (u.role === "student") return "/portal";
-  if (u.role === "teacher") return "/classes";
   if (u.role === "manager") return "/dashboard";
-  return "/inbox";
+  return "/hom-nay"; // tư vấn, giáo vụ, kế toán, giảng viên: việc của chính mình hôm nay
 }
 
 function AuthProvider({ children }: { children: ReactNode }) {

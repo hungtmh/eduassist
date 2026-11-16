@@ -1,0 +1,259 @@
+# Production: HTTPS tự động (Caddy + Let's Encrypt), sao lưu DB hằng ngày, không mở cổng DB, không dữ liệu demo.
+#
+#   cp .env.production.example .env.production   # điền tên miền, mật khẩu, SMTP, GROQ_API_KEY
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Lần đầu: xem log của service setup để lấy mật khẩu tạm của tài khoản quản lý (nếu không đặt ADMIN_PASSWORD):
+#   docker compose -f docker-compose.prod.yml --env-file .env.production logs setup
+#
+# Chỉ Caddy mở cổng ra ngoài (80, 443). Web và API đi chung một tên miền: /api/* -> API, còn lại -> web.
+#
+# Bố cục trong MỘT máy (mở rộng ra nhiều máy: docs/SCALING_PLAN.md mục 3 và 4):
+#   caddy -> api      (nghiệp vụ, API_WORKERS tiến trình)  ┐
+#         -> api-chat (chat LLM async, ngăn riêng)          ├-> db   (hoặc pgbouncer -> db, xem dưới)
+#         -> web                                            ┘   redis (giới hạn lượt gọi, cache, số lượt chat LLM)
+#   worker (agent nền), backup (pg_dump hằng ngày)
+#
+# PgBouncer (tuỳ chọn): cần khi NHIỀU máy API cùng nối một Postgres (mỗi tiến trình mở tới khoảng 30 kết nối). Một máy
+# thì nối thẳng nhanh hơn: đo trên máy 2 vCPU, PgBouncer chạy chung máy làm giảm trần từ khoảng 300 xuống 250 req/s.
+#   Bật: APP_DB_ADDR=pgbouncer:6432 DB_VIA_PGBOUNCER=true docker compose ... --profile pgbouncer up -d
+
+x-app-env: &app-env
+  APP_ENV: production
+  DEMO_MODE: "false"
+  TZ: Asia/Ho_Chi_Minh
+  # Ứng dụng nối db (hoặc pgbouncer:6432 nếu bật PgBouncer). Setup và sao lưu luôn nối thẳng db (ghi đè ở dưới).
+  DATABASE_URL: postgresql://app_rw:${POSTGRES_PASSWORD:?đặt POSTGRES_PASSWORD}@${APP_DB_ADDR:-db:5432}/eduassist
+  AGENT_RO_URL: postgresql://agent_ro:${AGENT_RO_PASSWORD:?đặt AGENT_RO_PASSWORD}@${APP_DB_ADDR:-db:5432}/eduassist
+  DB_VIA_PGBOUNCER: ${DB_VIA_PGBOUNCER:-false}
+  AGENT_RO_PASSWORD: ${AGENT_RO_PASSWORD}
+  REDIS_URL: redis://redis:6379/0
+  CORS_ORIGINS: https://${APP_DOMAIN:?đặt APP_DOMAIN}
+  PUBLIC_WEB_URL: https://${APP_DOMAIN}
+
+x-restart: &restart
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  db:
+    <<: *restart
+    image: pgvector/pgvector:pg16
+    # Mặc định hợp với máy 4 GB RAM dành riêng cho DB. Máy 16 GB: PG_SHARED_BUFFERS=4GB, PG_EFFECTIVE_CACHE_SIZE=12GB.
+    command:
+      [
+        "postgres", "-c", "timezone=Asia/Ho_Chi_Minh",
+        # Ghi thống kê từng truy vấn (tìm truy vấn chậm): SELECT * FROM pg_stat_statements
+        "-c", "shared_preload_libraries=pg_stat_statements",
+        "-c", "shared_buffers=${PG_SHARED_BUFFERS:-1GB}",
+        "-c", "effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-3GB}",
+        "-c", "work_mem=${PG_WORK_MEM:-16MB}",
+        "-c", "maintenance_work_mem=256MB",
+        # PgBouncer giữ tối đa 80 + 10 kết nối thật; còn lại cho setup, sao lưu, quản trị
+        "-c", "max_connections=${PG_MAX_CONNECTIONS:-150}",
+        "-c", "random_page_cost=1.1",
+        "-c", "wal_compression=on",
+        "-c", "max_wal_size=2GB",
+        "-c", "checkpoint_completion_target=0.9",
+        # Ghi log câu SQL chạy quá 500 ms và lần chờ khoá quá lâu
+        "-c", "log_min_duration_statement=500",
+        "-c", "log_lock_waits=on",
+      ]
+    shm_size: 256mb
+    environment:
+      POSTGRES_DB: eduassist
+      POSTGRES_USER: app_rw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: Asia/Ho_Chi_Minh
+    # KHÔNG có "ports": database chỉ truy cập được từ mạng nội bộ của Docker
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_rw -d eduassist"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  pgbouncer:
+    <<: *restart
+    profiles: ["pgbouncer"]
+    image: edoburu/pgbouncer:v1.24.1-p1
+    entrypoint: ["/bin/sh", "/start.sh"]
+    environment:
+      APP_PASSWORD: ${POSTGRES_PASSWORD}
+      RO_PASSWORD: ${AGENT_RO_PASSWORD}
+      POOL_SIZE: ${PGBOUNCER_POOL_SIZE:-40}
+    volumes:
+      - ./deploy/pgbouncer/start.sh:/start.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 6432"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      db:
+        condition: service_healthy
+
+  redis:
+    <<: *restart
+    # Chỉ chứa bộ đếm và cache có hạn: không lưu xuống đĩa. Redis chết thì API tự dùng tạm RAM (eduassist/cache.py).
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  setup:
+    # Migration + role read-only + tài khoản quản lý đầu tiên. Không seed dữ liệu giả (DEMO_MODE=false).
+    # Nối THẲNG db: migration cần phiên riêng, không đi qua PgBouncer.
+    build: .
+    command: ["eduassist-setup"]
+    env_file: .env.production
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgresql://app_rw:${POSTGRES_PASSWORD}@db:5432/eduassist
+      AGENT_RO_URL: postgresql://agent_ro:${AGENT_RO_PASSWORD}@db:5432/eduassist
+      DB_VIA_PGBOUNCER: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    # API nghiệp vụ. API_WORKERS = số vCPU của máy (đo được khoảng 150 req/s mỗi tiến trình, loadtest/README.md).
+    <<: *restart
+    build: .
+    # --proxy-headers: lấy IP thật của người dùng từ Caddy (giới hạn đăng nhập theo IP cần điều này)
+    command:
+      [
+        "uvicorn", "eduassist.api.main:app", "--host", "0.0.0.0", "--port", "8000",
+        "--proxy-headers", "--forwarded-allow-ips", "*",
+      ]
+    env_file: .env.production
+    environment:
+      <<: *app-env
+      WEB_CONCURRENCY: ${API_WORKERS:-2}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+        required: false  # chỉ có khi bật profile pgbouncer
+      redis:
+        condition: service_healthy
+
+  api-chat:
+    # Cùng code, chỉ nhận /api/chat* và /api/public/chat (Caddy chia). Chat async: một tiến trình giữ hàng trăm cuộc
+    # chat đang chờ LLM; tách riêng để LLM chậm không làm chậm trang thường.
+    <<: *restart
+    build: .
+    command:
+      [
+        "uvicorn", "eduassist.api.main:app", "--host", "0.0.0.0", "--port", "8000",
+        "--proxy-headers", "--forwarded-allow-ips", "*",
+      ]
+    env_file: .env.production
+    environment:
+      <<: *app-env
+      WEB_CONCURRENCY: ${CHAT_WORKERS:-1}
+      MAX_CONCURRENT_STREAMS: ${MAX_CONCURRENT_STREAMS:-500}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+        required: false  # chỉ có khi bật profile pgbouncer
+      redis:
+        condition: service_healthy
+
+  worker:
+    # Chạy thêm bản thứ hai (dự phòng) an toàn: outbox SKIP LOCKED, agent theo lịch có khoá (background/runner.py)
+    <<: *restart
+    build: .
+    command: ["eduassist-worker"]
+    env_file: .env.production
+    environment: *app-env
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+        required: false  # chỉ có khi bật profile pgbouncer
+
+  web:
+    <<: *restart
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: https://${APP_DOMAIN}/api
+        NEXT_PUBLIC_SITE_URL: https://${APP_DOMAIN}
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      # Trang công khai render phía server gọi thẳng API trong mạng Docker (không vòng qua Internet)
+      API_INTERNAL_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+
+  caddy:
+    <<: *restart
+    image: caddy:2.10-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?đặt ACME_EMAIL (email nhận thông báo chứng chỉ)}
+      # Nhiều máy: liệt kê địa chỉ cách nhau bằng dấu cách, VD API_UPSTREAMS="10.0.0.11:8000 10.0.0.12:8000"
+      API_UPSTREAMS: ${API_UPSTREAMS:-api:8000}
+      CHAT_UPSTREAMS: ${CHAT_UPSTREAMS:-api-chat:8000}
+      WEB_UPSTREAMS: ${WEB_UPSTREAMS:-web:3000}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+      - api
+      - api-chat
+
+  backup:
+    # pg_dump mỗi ngày lúc BACKUP_HOUR, giữ BACKUP_KEEP_DAYS ngày, lưu ở ./backups trên máy chủ.
+    # Cần thêm bước chép thư mục này ra NGOÀI máy chủ (rclone / S3 / ổ khác) - xem docs/DEPLOY.md.
+    # Mất tối đa 24 giờ dữ liệu; muốn khôi phục tới từng phút thì thêm sao lưu WAL (docs/SCALING_PLAN.md, giai đoạn 4).
+    <<: *restart
+    image: pgvector/pgvector:pg16
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    environment:
+      PGHOST: db
+      PGUSER: app_rw
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: eduassist
+      TZ: Asia/Ho_Chi_Minh
+      BACKUP_HOUR: ${BACKUP_HOUR:-2}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - ./deploy/backup.sh:/backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

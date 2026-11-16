@@ -21,6 +21,7 @@ dependencies = [
     "psycopg[binary,pool]>=3.3.6",
     "pydantic-settings>=2.16.2",
     "pyjwt>=2.15.1",
+    "redis>=5.2",
     "sqlalchemy>=2.1.8",
     "sqlglot>=30.27.0",
     "uvicorn[standard]>=0.54.0",
@@ -69,6 +70,7 @@ dev = [
 ]
 obs = [
     "langfuse>=5.1.0",
+    "sentry-sdk[fastapi]>=2.30.0",
 ]
 ui = [
     "chainlit>=2.12.0",

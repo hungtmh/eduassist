@@ -25,7 +25,16 @@ _STAFF_COMMON = {"student.read", "class.read", "chat.data", "task.read"}
 PERMISSIONS: dict[str, set[str]] = {
     "student": {"portal"},
     "consultant": _STAFF_COMMON
-    | {"lead.read", "lead.write", "student.write", "enroll.create", "invoice.read", "voucher.issue", "email.send"},
+    | {
+        "lead.read",
+        "lead.write",
+        "student.write",
+        "student.account",
+        "enroll.create",
+        "invoice.read",
+        "voucher.issue",
+        "email.send",
+    },
     "academic": _STAFF_COMMON
     | {
         "class.write",
@@ -37,6 +46,7 @@ PERMISSIONS: dict[str, set[str]] = {
         "email.send",
         "invoice.read",
         "lead.read",
+        "student.account",
     },
     "accountant": _STAFF_COMMON
     | {
@@ -56,6 +66,7 @@ PERMISSIONS["manager"] = set().union(*PERMISSIONS.values()) - {"portal"} | {
     "report.read",
     "agent.run",
     "user.admin",
+    "course.write",
     "proposal.decide_any",
     "data.delete",
 }
@@ -215,6 +226,35 @@ def audit(
 def emit_event(conn, kind: str, **payload) -> None:
     """Ghi sự kiện vào outbox TRONG CÙNG transaction với thay đổi dữ liệu -> không mất sự kiện, không có sự kiện ma."""
     conn.execute("INSERT INTO outbox_su_kien (loai, payload) VALUES (%s, %s)", (kind, to_json(payload)))
+
+
+class Page(list):
+    """Một trang kết quả: dùng như list, kèm .total = tổng số dòng khớp điều kiện (mọi trang)."""
+
+    def __init__(self, items: list, total: int):
+        super().__init__(items)
+        self.total = total
+
+
+def paginate(conn, sql: str, params: dict, order_by: str, limit: int, offset: int = 0) -> Page:
+    """Chạy `sql` (không có ORDER BY/LIMIT) theo trang. order_by dùng tên cột ĐẦU RA của sql.
+    Giới hạn kích thước trang cho người dùng nằm ở API (Query le=...); code nội bộ được lấy trang lớn.
+
+    Hai câu riêng (lấy trang, rồi đếm khi cần) thay vì một câu có count(*) OVER (): hàm cửa sổ bắt Postgres tính đủ
+    mọi cột - kể cả truy vấn con như "số lớp đang học" - cho MỌI dòng khớp rồi mới cắt lấy một trang. Tách ra thì
+    Postgres chỉ tính truy vấn con cho các dòng của trang (cột không phải khoá sắp xếp được tính sau LIMIT), và câu đếm
+    bỏ hẳn các cột không dùng. Đo trên 10.000 học viên / 3.000 khách: 17-20 ms còn vài ms."""
+    limit = max(1, int(limit))
+    offset = max(0, int(offset))
+    rows = conn.execute(
+        f"SELECT _q.* FROM ({sql}) _q ORDER BY {order_by} LIMIT %(_limit)s OFFSET %(_offset)s",
+        {**params, "_limit": limit, "_offset": offset},
+    ).fetchall()
+    if len(rows) < limit and (rows or not offset):
+        total = offset + len(rows)  # trang cuối: biết tổng mà không cần đếm
+    else:
+        total = conn.execute(f"SELECT count(*) AS n FROM ({sql}) _q", params).fetchone()["n"]
+    return Page(rows, total)
 
 
 def one(conn, sql: str, params: Any = None, what: str = "dữ liệu") -> dict:

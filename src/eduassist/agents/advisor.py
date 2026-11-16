@@ -75,7 +75,7 @@ def find_courses(
                        ORDER BY lh.ngay_khai_giang) FILTER (WHERE lh.id IS NOT NULL), '[]') AS lop
             FROM khoa_hoc kh
             LEFT JOIN lop_hoc lh ON lh.khoa_hoc_id = kh.id AND lh.trang_thai = 'sap_khai_giang'
-            WHERE (%(dm)s::text IS NULL OR kh.danh_muc = %(dm)s)
+            WHERE kh.dang_mo_ban AND (%(dm)s::text IS NULL OR kh.danh_muc = %(dm)s)
               AND (%(td)s::text IS NULL OR kh.trinh_do = %(td)s)
               AND (%(hp)s::int IS NULL OR kh.hoc_phi <= %(hp)s)
               AND (%(kw)s::text IS NULL OR kh.ten ILIKE '%%' || %(kw)s || '%%' OR kh.mo_ta ILIKE '%%' || %(kw)s || '%%')

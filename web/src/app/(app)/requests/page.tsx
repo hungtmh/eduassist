@@ -17,8 +17,10 @@ import {
   StatusBadge,
   Textarea,
   useToast,
+  LoadMore,
 } from "@/components/ui";
 import { api } from "@/lib/api";
+import { usePaged } from "@/lib/use-paged";
 import { fmtDateTime } from "@/lib/format";
 import { REQUEST_KIND, REQUEST_STATUS } from "@/lib/labels";
 
@@ -45,7 +47,8 @@ const APPROVE_TEXT: Record<string, string> = {
 
 export default function RequestsPage() {
   const [status, setStatus] = useState("moi");
-  const { data, error, mutate } = useSWR<Req[]>(`/requests${status ? `?trang_thai=${status}` : ""}`);
+  const list = usePaged<Req>(`/requests${status ? `?trang_thai=${status}` : ""}`, 50);
+  const { items: data, error, mutate } = list;
   const toast = useToast();
   const [cur, setCur] = useState<{ r: Req; ok: boolean } | null>(null);
   const [reply, setReply] = useState("");
@@ -54,7 +57,7 @@ export default function RequestsPage() {
   const [newClass, setNewClass] = useState("");
   const [busy, setBusy] = useState(false);
   const { data: classes } = useSWR<{ id: number; ma_lop: string; khoa_hoc: string; trang_thai: string }[]>(
-    cur?.r.loai === "chuyen_lop" && cur.ok ? "/classes" : null,
+    cur?.r.loai === "chuyen_lop" && cur.ok ? "/classes?con_mo=true" : null,
   );
 
   async function handle() {
@@ -182,6 +185,9 @@ export default function RequestsPage() {
           </Field>
         </div>
       </Dialog>
+      {data && (
+        <LoadMore shown={data.length} total={list.total} noun="yêu cầu" hasMore={list.hasMore} loading={list.loadingMore} onMore={list.loadMore} />
+      )}
     </>
   );
 }

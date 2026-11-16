@@ -7,7 +7,7 @@ import useSWR, { mutate as refresh } from "swr";
 import { Badge, Button, Field, Input, StatusBadge, Textarea, cx, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { fmtDate, fmtDateTime, vnd } from "@/lib/format";
-import { AGENT_LABEL, LEVEL, PROPOSAL_STATUS } from "@/lib/labels";
+import { AGENT_LABEL, LEVEL, PROPOSAL_STATUS, ROLE } from "@/lib/labels";
 
 export type Proposal = {
   id: number;
@@ -28,6 +28,7 @@ export type Proposal = {
   truong_sua_duoc: string[];
   khoa_muc: string | null;
   co_the_duyet: boolean;
+  vai_tro_thuc_thi?: string;
   created_at: string;
   decided_at: string | null;
   het_han_luc: string | null;
@@ -303,6 +304,17 @@ export function ProposalDetail({ id, onChanged }: { id: number; onChanged?: () =
         </section>
       )}
 
+      {p.trang_thai === "cho_duyet" && !p.co_the_duyet && (
+        <footer className="border-t border-line pt-4">
+          <p className="rounded-lg bg-surface-muted px-3 py-2.5 text-fg-secondary text-pretty">
+            Bạn chỉ xem được đề xuất này, không có quyền duyệt. Người duyệt:{" "}
+            <strong className="font-medium text-fg">
+              {p.vai_tro_thuc_thi === "manager" ? "Quản lý" : `${ROLE[p.vai_tro_thuc_thi ?? ""] ?? "Người phụ trách"} hoặc Quản lý`}
+            </strong>
+            .
+          </p>
+        </footer>
+      )}
       {p.co_the_duyet && (
         <footer className="flex flex-col gap-3 border-t border-line pt-4">
           {confirmReject ? (

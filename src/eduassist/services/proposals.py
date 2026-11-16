@@ -18,12 +18,14 @@ from eduassist.services.core import (
     Actor,
     Forbidden,
     NotFound,
+    Page,
     RuleViolation,
     audit,
     check_transition,
     emit_event,
     has_perm,
     one,
+    paginate,
     require,
     to_json,
     today,
@@ -324,9 +326,16 @@ LIST_SQL = """SELECT id, agent, loai_hanh_dong, tieu_de, tom_tat, muc_tu_chu, tr
               FROM de_xuat_agent"""
 
 
-def list_proposals(conn, actor: Actor, status: str | None = None, agent: str | None = None, limit: int = 100):
+def list_proposals(
+    conn,
+    actor: Actor,
+    status: str | None = None,
+    agent: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> Page:
     require(actor, "chat.data")
-    where, params = ["true"], {"limit": limit}
+    where, params = ["true"], {}
     if status == "can_xu_ly":
         where.append("trang_thai IN ('cho_duyet', 'goi_y')")
     elif status:
@@ -339,14 +348,14 @@ def list_proposals(conn, actor: Actor, status: str | None = None, agent: str | N
         perms = [k for k, a in ACTIONS.items() if has_perm(actor, a.perm)]
         where.append("(loai_hanh_dong = ANY(%(perms)s) OR nguoi_yeu_cau = %(me)s)")
         params.update(perms=perms, me=actor.id)
-    rows = conn.execute(
-        LIST_SQL
-        + " WHERE "
-        + " AND ".join(where)
-        + " ORDER BY CASE trang_thai WHEN 'cho_duyet' THEN 0 WHEN 'goi_y' THEN 1 ELSE 2 END, created_at DESC"
-        " LIMIT %(limit)s",
+    rows = paginate(
+        conn,
+        LIST_SQL + " WHERE " + " AND ".join(where),
         params,
-    ).fetchall()
+        "CASE trang_thai WHEN 'cho_duyet' THEN 0 WHEN 'goi_y' THEN 1 ELSE 2 END, created_at DESC, id DESC",
+        limit,
+        offset,
+    )
     for r in rows:
         r["ten_hanh_dong"] = ACTIONS[r["loai_hanh_dong"]].label
         r["co_the_duyet"] = _can_decide(actor, r) if r["trang_thai"] == "cho_duyet" else False

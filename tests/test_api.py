@@ -6,13 +6,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from eduassist.api import main
-from eduassist.api.auth import AuthUser
-from eduassist.api.ratelimit import RateLimiter
+from eduassist.api.auth import AuthUser, get_user_loader
+from eduassist.api.ratelimit import RateLimiter, get_login_limiter
 
-USERS = {
-    "hocvien": AuthUser("hocvien", "student", "Học viên", 1),
-    "nhanvien": AuthUser("nhanvien", "consultant", "Nhân viên", None),
-}
+
+def fresh_users() -> dict[str, AuthUser]:
+    return {
+        "hocvien": AuthUser("hocvien", "student", "Học viên", 1),
+        "nhanvien": AuthUser("nhanvien", "consultant", "Nhân viên", None),
+    }
+
+
+# "Database" tài khoản giả: test sửa trực tiếp để mô phỏng khoá tài khoản / đổi quyền / đổi mật khẩu
+USERS = fresh_users()
 
 
 class FakeBackend:
@@ -23,7 +29,7 @@ class FakeBackend:
     def authenticate(self, username, password):
         return USERS.get(username) if password == "demo123" else None
 
-    def stream_turn(self, ctx, message=None, resume=None):
+    async def stream_turn(self, ctx, message=None, resume=None):  # async như chat thật (astream_turn)
         self.calls.append({"ctx": ctx, "message": message, "resume": resume})
         yield {"type": "step", "step": "agent_start", "agent": "advisor", "task": message or ""}
         if message and "email" in message:
@@ -53,11 +59,20 @@ def backend():
     return FakeBackend()
 
 
+def install(backend, chat_limit: int = 1000, login_limit: int = 1000) -> TestClient:
+    USERS.clear()
+    USERS.update(fresh_users())
+    main.app.dependency_overrides[main.get_backend] = lambda: backend
+    main.app.dependency_overrides[main.get_rate_limiter] = lambda: RateLimiter(per_minute=chat_limit)
+    login_limiter = RateLimiter(per_minute=login_limit)
+    main.app.dependency_overrides[get_login_limiter] = lambda: login_limiter
+    main.app.dependency_overrides[get_user_loader] = lambda: USERS.get
+    return TestClient(main.app)
+
+
 @pytest.fixture
 def client(backend):
-    main.app.dependency_overrides[main.get_backend] = lambda: backend
-    main.app.dependency_overrides[main.get_rate_limiter] = lambda: RateLimiter(per_minute=1000)
-    yield TestClient(main.app)
+    yield install(backend)
     main.app.dependency_overrides.clear()
 
 
@@ -151,11 +166,52 @@ def test_feedback_promotes_only_for_staff(client):
 
 
 def test_rate_limit(backend):
-    main.app.dependency_overrides[main.get_backend] = lambda: backend
     limiter = RateLimiter(per_minute=2)
+    c = install(backend)
     main.app.dependency_overrides[main.get_rate_limiter] = lambda: limiter
-    c = TestClient(main.app)
     h = login(c)
     codes = [c.post("/chat", json={"message": "a"}, headers=h).status_code for _ in range(3)]
     main.app.dependency_overrides.clear()
     assert codes == [200, 200, 429]
+
+
+# ---------------------------------------------------------------- phiên đăng nhập (production)
+def test_role_comes_from_account_not_token(client):
+    h = login(client, "nhanvien")
+    USERS["nhanvien"].role = "accountant"  # quản lý vừa đổi vai trò
+    assert client.get("/me", headers=h).json()["role"] == "accountant"
+
+
+def test_deactivated_account_is_logged_out_immediately(client):
+    h = login(client, "nhanvien")
+    del USERS["nhanvien"]  # loader trả None = tài khoản bị khoá
+    r = client.get("/me", headers=h)
+    assert r.status_code == 401
+
+
+def test_password_change_revokes_old_tokens(client):
+    h = login(client, "nhanvien")
+    USERS["nhanvien"].token_version += 1  # đổi mật khẩu / đăng xuất mọi thiết bị ở nơi khác
+    assert client.get("/me", headers=h).status_code == 401
+    assert client.post("/chat", json={"message": "a"}, headers=h).status_code == 401
+
+
+def test_must_change_password_blocks_everything_but_profile(client):
+    USERS["nhanvien"].must_change_password = True
+    h = login(client, "nhanvien")
+    assert client.get("/me", headers=h).status_code == 200
+    r = client.post("/chat", json={"message": "a"}, headers=h)
+    assert r.status_code == 403
+    assert r.headers["X-Must-Change-Password"] == "1"
+
+
+def test_login_rate_limited_per_ip(backend):
+    c = install(backend, login_limit=3)
+    codes = [c.post("/auth/login", json={"username": "x", "password": "y"}).status_code for _ in range(4)]
+    main.app.dependency_overrides.clear()
+    assert codes == [401, 401, 401, 429]
+
+
+def test_public_config_needs_no_login(client):
+    r = client.get("/public/config")
+    assert r.status_code == 200 and "demo_mode" in r.json()

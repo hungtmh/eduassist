@@ -13,6 +13,7 @@ from eduassist.services.core import (
     VOUCHER_MAX_PERCENT,
     Actor,
     Forbidden,
+    Page,
     RuleViolation,
     audit,
     emit_event,
@@ -21,25 +22,43 @@ from eduassist.services.core import (
     today,
 )
 
-INVOICE_SQL = """
+# Số đã đóng / hạn gần nhất tính theo từng đơn bằng LATERAL (tra index theo don_hang_id): chỉ tính cho các dòng
+# thật sự trả về. Trước đây danh sách tính cho MỌI đơn rồi mới lấy 50 dòng - với 50.000 đơn mất khoảng 230 ms.
+INVOICE_SQL = (
+    """
 SELECT d.id, d.hoc_vien_id, hv.ho_ten, hv.email, hv.so_dien_thoai, lh.ma_lop, kh.ten AS khoa_hoc,
        d.ngay_dat, d.hoc_phi_goc, d.giam_gia, d.thanh_tien, d.trang_thai, d.trang_thai_hoc, d.tra_gop,
        coalesce(p.da_dong, 0)::int AS da_dong,
        (d.thanh_tien - coalesce(p.da_dong, 0))::int AS con_no,
-       (SELECT min(han_thanh_toan) FROM dot_thanh_toan x WHERE x.don_hang_id = d.id
-            AND x.trang_thai IN ('chua_thanh_toan', 'qua_han')) AS han_gan_nhat,
-       (SELECT count(*) FROM dot_thanh_toan x WHERE x.don_hang_id = d.id AND x.trang_thai = 'qua_han')::int AS so_dot_qua_han
+       x.han_gan_nhat, x.so_dot_qua_han::int AS so_dot_qua_han
 FROM don_hang d
 JOIN hoc_vien hv ON hv.id = d.hoc_vien_id
 JOIN lop_hoc lh ON lh.id = d.lop_hoc_id
 JOIN khoa_hoc kh ON kh.id = lh.khoa_hoc_id
-LEFT JOIN (SELECT don_hang_id, sum(so_tien) AS da_dong FROM thanh_toan GROUP BY don_hang_id) p ON p.don_hang_id = d.id
+LEFT JOIN LATERAL (SELECT sum(so_tien) AS da_dong FROM thanh_toan t WHERE t.don_hang_id = d.id) p ON true
 """
+    + """LEFT JOIN LATERAL (SELECT min(han_thanh_toan) FILTER (WHERE trang_thai IN ('chua_thanh_toan', 'qua_han')) AS han_gan_nhat,
+                          count(*) FILTER (WHERE trang_thai = 'qua_han') AS so_dot_qua_han
+                   FROM dot_thanh_toan x WHERE x.don_hang_id = d.id) x ON true
+"""
+)
+
+# Hạn gần nhất của mọi đơn, gộp một lần (bảng đợt trả góp nhỏ): dùng để SẮP XẾP danh sách mà không phải ghép đủ cột
+DUE_SQL = """(SELECT don_hang_id, min(han_thanh_toan) AS han_gan_nhat FROM dot_thanh_toan
+              WHERE trang_thai IN ('chua_thanh_toan', 'qua_han') GROUP BY don_hang_id)"""
 
 
 def list_invoices(
-    conn, actor: Actor, status: str | None = None, q: str | None = None, overdue: bool = False, limit=200
-):
+    conn,
+    actor: Actor,
+    status: str | None = None,
+    q: str | None = None,
+    overdue: bool = False,
+    limit: int = 200,
+    offset: int = 0,
+) -> Page:
+    """Ba bước nhẹ thay cho một truy vấn nặng: đếm tổng, lấy id của trang (chỉ cần cột để lọc / sắp xếp), rồi mới
+    lấy đủ cột cho đúng các id đó. Cùng kết quả và thứ tự như trước (hạn gần nhất, rồi đơn mới trước)."""
     require(actor, "invoice.read")
     where, params = ["true"], {}
     if status == "con_no":
@@ -49,14 +68,23 @@ def list_invoices(
         params["st"] = status
     if overdue:
         where.append("EXISTS (SELECT 1 FROM dot_thanh_toan x WHERE x.don_hang_id = d.id AND x.trang_thai = 'qua_han')")
+    joins = ""
     if q:
+        joins = " JOIN hoc_vien hv ON hv.id = d.hoc_vien_id JOIN lop_hoc lh ON lh.id = d.lop_hoc_id"
         where.append("(hv.ho_ten ILIKE %(q)s OR lh.ma_lop ILIKE %(q)s OR hv.email ILIKE %(q)s)")
         params["q"] = f"%{q}%"
-    params["limit"] = limit
-    return conn.execute(
-        INVOICE_SQL + " WHERE " + " AND ".join(where) + " ORDER BY han_gan_nhat NULLS LAST, d.id DESC LIMIT %(limit)s",
-        params,
-    ).fetchall()
+    cond = " WHERE " + " AND ".join(where)
+    total = conn.execute("SELECT count(*) AS n FROM don_hang d" + joins + cond, params).fetchone()["n"]
+    ids = [
+        r["id"]
+        for r in conn.execute(
+            f"SELECT d.id FROM don_hang d{joins} LEFT JOIN {DUE_SQL} due ON due.don_hang_id = d.id{cond}"
+            " ORDER BY due.han_gan_nhat NULLS LAST, d.id DESC LIMIT %(_limit)s OFFSET %(_offset)s",
+            {**params, "_limit": max(1, int(limit)), "_offset": max(0, int(offset))},
+        ).fetchall()
+    ]
+    rows = {r["id"]: r for r in conn.execute(INVOICE_SQL + " WHERE d.id = ANY(%s)", (ids,)).fetchall()}
+    return Page([rows[i] for i in ids], total)
 
 
 def get_invoice(conn, actor: Actor, invoice_id: int) -> dict:
