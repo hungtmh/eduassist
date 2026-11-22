@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eduassist
+  labels:
+    # Chặn pod chạy đặc quyền (privileged, hostPath...). Caddy cần chạy root để mở cổng 80/443 nên chưa bật được
+    # mức "restricted"; K8s chỉ cảnh báo khi pod vi phạm mức đó.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted

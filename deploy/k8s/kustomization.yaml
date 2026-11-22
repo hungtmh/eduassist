@@ -1,0 +1,35 @@
+# EduAssist trên Kubernetes (AKS). Áp dụng bằng deploy/k8s/scripts/deploy.sh, không apply tay
+# (script tạo Secret, đổi tag image, chạy Job setup trước khi cập nhật ứng dụng).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: eduassist
+
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - redis.yaml
+  - api.yaml
+  - api-chat.yaml
+  - worker.yaml
+  - web.yaml
+  - caddy.yaml
+  - networkpolicy.yaml
+
+# Tên ConfigMap cố định (không thêm mã băm) để Job setup chạy ngoài kustomize dùng chung được. Đổi config.env hoặc
+# Caddyfile thì chạy deploy.sh với --restart để các pod đọc lại.
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: eduassist-config
+    envs: [config.env]
+  - name: caddyfile
+    files: [Caddyfile]
+
+images:
+  - name: eduassist-api
+    newName: ghcr.io/hungtmh/eduassist-api
+    newTag: TAG
+  - name: eduassist-web
+    newName: ghcr.io/hungtmh/eduassist-web
+    newTag: TAG

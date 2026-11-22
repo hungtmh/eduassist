@@ -1,0 +1,102 @@
+# Cổng vào duy nhất từ Internet: HTTPS (Let's Encrypt, tự gia hạn), header bảo mật, định tuyến /api, /api/chat, web.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: caddy-data
+spec:
+  # Azure Files: nhiều pod ở nhiều node cùng ghi được (ổ đĩa thường chỉ gắn vào một node)
+  accessModes: [ReadWriteMany]
+  storageClassName: azurefile-csi
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caddy
+  labels: {app: caddy}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels: {app: caddy}
+  template:
+    metadata:
+      labels: {app: caddy}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      # Hai bản ở hai node khác nhau: một node chết vẫn còn cổng vào
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app: caddy}
+      containers:
+        - name: caddy
+          image: caddy:2.10-alpine
+          ports:
+            - {name: http, containerPort: 80}
+            - {name: https, containerPort: 443}
+            - {name: health, containerPort: 8080}
+          env:
+            - name: APP_DOMAIN
+              valueFrom: {configMapKeyRef: {name: eduassist-config, key: APP_DOMAIN}}
+          resources:
+            requests: {cpu: 50m, memory: 48Mi}
+            limits: {memory: 256Mi}
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            periodSeconds: 20
+          lifecycle:
+            preStop:
+              sleep: {seconds: 5}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [NET_BIND_SERVICE]
+          volumeMounts:
+            - {name: caddyfile, mountPath: /etc/caddy}
+            - {name: data, mountPath: /data}
+            - {name: config, mountPath: /config}
+      volumes:
+        - name: caddyfile
+          configMap: {name: caddyfile}
+        - name: data
+          persistentVolumeClaim: {claimName: caddy-data}
+        - name: config
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: caddy
+  annotations:
+    # Tên miền miễn phí: eduassist-hcmus.malaysiawest.cloudapp.azure.com trỏ vào IP của Load Balancer
+    service.beta.kubernetes.io/azure-dns-label-name: eduassist-hcmus
+spec:
+  type: LoadBalancer
+  # Chỉ gửi vào node có pod Caddy và giữ IP thật của người dùng (giới hạn đăng nhập theo IP cần điều này)
+  externalTrafficPolicy: Local
+  selector: {app: caddy}
+  ports:
+    - {name: http, port: 80, targetPort: 80}
+    - {name: https, port: 443, targetPort: 443}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: caddy
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: caddy}

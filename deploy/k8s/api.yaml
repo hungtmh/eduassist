@@ -1,0 +1,102 @@
+# API nghiệp vụ. Không giữ dữ liệu: nhân bản tự do, HPA thêm pod khi CPU cao.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels: {app: api, tier: app}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels: {app: api}
+  template:
+    metadata:
+      labels: {app: api, tier: app}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 40
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app: api}
+      containers:
+        - name: api
+          image: eduassist-api
+          command: ["uvicorn", "eduassist.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef: {name: eduassist-config}
+            - secretRef: {name: eduassist-secrets}
+          resources:
+            requests: {cpu: 200m, memory: 512Mi}
+            limits: {memory: 1200Mi}
+          # Nạp mô hình embedding có thể mất vài chục giây: chưa xong thì chưa kiểm tra "còn sống"
+          startupProbe:
+            httpGet: {path: /health/live, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /health/live, port: 8000}
+            periodSeconds: 15
+            timeoutSeconds: 3
+          # /health có hỏi database: database lỗi thì tạm ngừng nhận request mới thay vì trả lỗi
+          readinessProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Chờ Service gỡ pod khỏi danh sách rồi mới tắt, để không cắt ngang request đang tới
+          lifecycle:
+            preStop:
+              sleep: {seconds: 5}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector: {app: api}
+  ports:
+    - port: 8000
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: api}
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 70}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: api}

@@ -19,9 +19,11 @@ Chạy nhiều worker cùng lúc (nhiều máy, hoặc một bản dự phòng) 
 import argparse
 import json
 import logging
+import tempfile
 import time
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 from eduassist.background.agents import AGENTS, EVENT_ROUTES
 from eduassist.background.base import AgentRun
@@ -230,6 +232,7 @@ def main() -> None:
         print(f"chạy theo yêu cầu: {process_run_requests()}, outbox: {process_outbox()} sự kiện")
         return
     log.info("worker chạy: outbox mỗi %ss, lịch hằng ngày sau %sh", s.worker_poll_seconds, s.daily_run_hour)
+    beat()
     while True:
         try:
             process_run_requests()
@@ -238,7 +241,34 @@ def main() -> None:
                 run_due()
         except Exception:
             log.exception("vòng lặp worker lỗi - thử lại sau")
+        beat()
         time.sleep(s.worker_poll_seconds)
+
+
+def heartbeat_path() -> Path:
+    return Path(get_settings().worker_heartbeat_file or Path(tempfile.gettempdir()) / "eduassist-worker.alive")
+
+
+def beat() -> None:
+    """Ghi nhịp tim sau mỗi vòng. Vòng lặp treo (VD kẹt ở một câu SQL) thì file không được cập nhật nữa."""
+    try:
+        heartbeat_path().write_text(str(int(time.time())))
+    except OSError:
+        log.warning("không ghi được nhịp tim worker vào %s", heartbeat_path())
+
+
+def heartbeat_ok() -> None:
+    """eduassist-worker-alive: thoát mã 0 nếu nhịp tim còn mới. K8s gọi lệnh này làm liveness probe (worker không có
+    HTTP để hỏi); quá hạn thì K8s khởi động lại worker."""
+    s = get_settings()
+    max_age = s.worker_poll_seconds + s.worker_heartbeat_grace_seconds
+    try:
+        age = time.time() - heartbeat_path().stat().st_mtime
+    except OSError:
+        print("chưa có nhịp tim")
+        raise SystemExit(1) from None
+    print(f"nhịp tim cách đây {age:.0f}s (tối đa {max_age}s)")
+    raise SystemExit(0 if age <= max_age else 1)
 
 
 if __name__ == "__main__":

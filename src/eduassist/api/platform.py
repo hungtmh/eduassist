@@ -31,6 +31,9 @@ router = APIRouter(route_class=FastJSONRoute)
 
 
 def db() -> Iterator:
+    """Một transaction cho cả request. Luôn khai báo Depends(db, scope="function"): COMMIT chạy TRƯỚC khi gửi
+    response, nên commit lỗi thì client nhận lỗi, không nhận 200 cho dữ liệu chưa lưu (mặc định của FastAPI là
+    commit SAU khi đã gửi response). tests/test_db_scope.py kiểm tra điều này."""
     from eduassist import cache
     from eduassist.db import app_pool
 
@@ -83,7 +86,7 @@ def profile(user: AuthUser = Depends(current_user_any)):
 
 
 @router.get("/me/today", tags=["tài khoản"])
-def my_day(conn=Depends(db), me: Actor = Depends(actor)):
+def my_day(conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return workday.my_day(conn, me)
 
 
@@ -94,14 +97,14 @@ def schedule(
     giang_vien_id: int | None = None,
     phong_hoc_id: int | None = None,
     lop_hoc_id: int | None = None,
-    conn=Depends(db),
+    conn=Depends(db, scope="function"),
     me: Actor = Depends(actor),
 ):
     return workday.schedule(conn, me, tu, den, giang_vien_id, phong_hoc_id, lop_hoc_id)
 
 
 @router.get("/notifications", tags=["thông báo"])
-def list_notifications(conn=Depends(db), me: Actor = Depends(actor)):
+def list_notifications(conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return notifications.list_notifications(conn, me)
 
 
@@ -110,7 +113,7 @@ class IdsBody(BaseModel):
 
 
 @router.post("/notifications/read", tags=["thông báo"])
-def read_notifications(body: IdsBody, conn=Depends(db), me: Actor = Depends(actor)):
+def read_notifications(body: IdsBody, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     notifications.mark_read(conn, me, body.ids)
     return {"ok": True}
 
@@ -173,44 +176,44 @@ def list_leads(
     q: str | None = None,
     limit: int = Limit,
     offset: int = Offset,
-    conn=Depends(db),
+    conn=Depends(db, scope="function"),
     me: Actor = Depends(actor),
 ):
     return paged(response, crm.list_leads(conn, me, trang_thai, phu_trach, q, limit, offset))
 
 
 @router.get("/leads/counts", tags=["tuyển sinh"])
-def lead_counts(conn=Depends(db), me: Actor = Depends(actor)):
+def lead_counts(conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return crm.lead_counts(conn, me)
 
 
 @router.post("/leads", tags=["tuyển sinh"], status_code=201)
-def create_lead(body: LeadIn, conn=Depends(db), me: Actor = Depends(actor)):
+def create_lead(body: LeadIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return crm.create_lead(conn, me, body.model_dump())
 
 
 @router.get("/leads/{lead_id}", tags=["tuyển sinh"])
-def get_lead(lead_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+def get_lead(lead_id: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return crm.get_lead(conn, me, lead_id)
 
 
 @router.post("/leads/{lead_id}/transition", tags=["tuyển sinh"])
-def transition_lead(lead_id: int, body: TransitionIn, conn=Depends(db), me: Actor = Depends(actor)):
+def transition_lead(lead_id: int, body: TransitionIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return crm.transition(conn, me, lead_id, body.trang_thai, body.ghi_chu)
 
 
 @router.post("/leads/{lead_id}/contact", tags=["tuyển sinh"])
-def contact_lead(lead_id: int, body: NoteIn, conn=Depends(db), me: Actor = Depends(actor)):
+def contact_lead(lead_id: int, body: NoteIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return crm.log_contact(conn, me, lead_id, body.ghi_chu)
 
 
 @router.post("/leads/{lead_id}/appointments", tags=["tuyển sinh"])
-def book(lead_id: int, body: AppointmentIn, conn=Depends(db), me: Actor = Depends(actor)):
+def book(lead_id: int, body: AppointmentIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return crm.book_appointment(conn, me, lead_id, body.loai, body.thoi_gian, body.lop_hoc_id)
 
 
 @router.post("/leads/{lead_id}/convert", tags=["tuyển sinh"])
-def convert(lead_id: int, body: ConvertIn, conn=Depends(db), me: Actor = Depends(actor)):
+def convert(lead_id: int, body: ConvertIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return crm.convert_to_student(conn, me, lead_id, body.nam_sinh, body.thanh_pho)
 
 
@@ -221,14 +224,14 @@ def list_tasks(
     trang_thai: str = "mo",
     limit: int = Limit,
     offset: int = Offset,
-    conn=Depends(db),
+    conn=Depends(db, scope="function"),
     me: Actor = Depends(actor),
 ):
     return paged(response, crm.list_tasks(conn, me, mine, trang_thai, limit, offset))
 
 
 @router.post("/tasks/{task_id}/done", tags=["tuyển sinh"])
-def task_done(task_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+def task_done(task_id: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     crm.complete_task(conn, me, task_id)
     return {"ok": True}
 
@@ -301,7 +304,7 @@ class CoursePatch(BaseModel):
 
 
 @router.get("/courses", tags=["đào tạo"])
-def courses(dang_ban: bool = False, conn=Depends(db), me: Actor = Depends(actor)):
+def courses(dang_ban: bool = False, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.list_courses(conn, me, dang_ban)
 
 
@@ -311,12 +314,12 @@ def course_options(me: Actor = Depends(actor)):
 
 
 @router.post("/courses", tags=["đào tạo"], status_code=201)
-def create_course(body: CourseIn, conn=Depends(db), me: Actor = Depends(actor)):
+def create_course(body: CourseIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.create_course(conn, me, body.model_dump(exclude_none=True))
 
 
 @router.patch("/courses/{course_id}", tags=["đào tạo"])
-def update_course(course_id: int, body: CoursePatch, conn=Depends(db), me: Actor = Depends(actor)):
+def update_course(course_id: int, body: CoursePatch, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.update_course(conn, me, course_id, body.model_dump(exclude_none=True))
 
 
@@ -329,7 +332,7 @@ def classes(
     con_mo: bool = False,
     limit: int | None = Query(default=None, ge=1, le=500),
     offset: int = Offset,
-    conn=Depends(db),
+    conn=Depends(db, scope="function"),
     me: Actor = Depends(actor),
 ):
     """con_mo=true: chỉ lớp đang học / sắp khai giảng. Có limit: phân trang, tổng ở header X-Total-Count."""
@@ -338,37 +341,37 @@ def classes(
 
 
 @router.post("/classes", tags=["đào tạo"], status_code=201)
-def create_class(body: ClassIn, conn=Depends(db), me: Actor = Depends(actor)):
+def create_class(body: ClassIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.create_class(conn, me, body.model_dump())
 
 
 @router.get("/classes/{class_id}", tags=["đào tạo"])
-def get_class(class_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+def get_class(class_id: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.get_class(conn, me, class_id)
 
 
 @router.patch("/classes/{class_id}", tags=["đào tạo"])
-def patch_class(class_id: int, body: ClassPatch, conn=Depends(db), me: Actor = Depends(actor)):
+def patch_class(class_id: int, body: ClassPatch, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.update_schedule(conn, me, class_id, body.model_dump(exclude_none=True))
 
 
 @router.post("/classes/{class_id}/open", tags=["đào tạo"])
-def open_class(class_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+def open_class(class_id: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.open_class(conn, me, class_id)
 
 
 @router.post("/classes/{class_id}/cancel", tags=["đào tạo"])
-def cancel_class(class_id: int, body: ReasonIn, conn=Depends(db), me: Actor = Depends(actor)):
+def cancel_class(class_id: int, body: ReasonIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.cancel_class(conn, me, class_id, body.ly_do)
 
 
 @router.get("/teachers", tags=["đào tạo"])
-def teachers(conn=Depends(db), me: Actor = Depends(actor)):
+def teachers(conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.list_teachers(conn, me)
 
 
 @router.get("/rooms", tags=["đào tạo"])
-def rooms(conn=Depends(db), me: Actor = Depends(actor)):
+def rooms(conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.list_rooms(conn, me)
 
 
@@ -392,51 +395,51 @@ class TeacherIn(BaseModel):
 
 
 @router.get("/branches", tags=["đào tạo"])
-def branches(conn=Depends(db), me: Actor = Depends(actor)):
+def branches(conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.list_branches(conn, me)
 
 
 @router.post("/branches", tags=["đào tạo"], status_code=201)
-def create_branch(body: BranchIn, conn=Depends(db), me: Actor = Depends(actor)):
+def create_branch(body: BranchIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.save_branch(conn, me, None, body.ten, body.dia_chi)
 
 
 @router.put("/branches/{branch_id}", tags=["đào tạo"])
-def update_branch(branch_id: int, body: BranchIn, conn=Depends(db), me: Actor = Depends(actor)):
+def update_branch(branch_id: int, body: BranchIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.save_branch(conn, me, branch_id, body.ten, body.dia_chi)
 
 
 @router.post("/rooms", tags=["đào tạo"], status_code=201)
-def create_room(body: RoomIn, conn=Depends(db), me: Actor = Depends(actor)):
+def create_room(body: RoomIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.save_room(conn, me, None, body.co_so_id, body.ten, body.suc_chua)
 
 
 @router.put("/rooms/{room_id}", tags=["đào tạo"])
-def update_room(room_id: int, body: RoomIn, conn=Depends(db), me: Actor = Depends(actor)):
+def update_room(room_id: int, body: RoomIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.save_room(conn, me, room_id, body.co_so_id, body.ten, body.suc_chua)
 
 
 @router.post("/teachers", tags=["đào tạo"], status_code=201)
-def create_teacher(body: TeacherIn, conn=Depends(db), me: Actor = Depends(actor)):
+def create_teacher(body: TeacherIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.save_teacher(
         conn, me, None, body.ho_ten, body.email, body.chuyen_mon, body.tieu_su, body.hien_thi_cong_khai
     )
 
 
 @router.put("/teachers/{teacher_id}", tags=["đào tạo"])
-def update_teacher(teacher_id: int, body: TeacherIn, conn=Depends(db), me: Actor = Depends(actor)):
+def update_teacher(teacher_id: int, body: TeacherIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return training.save_teacher(
         conn, me, teacher_id, body.ho_ten, body.email, body.chuyen_mon, body.tieu_su, body.hien_thi_cong_khai
     )
 
 
 @router.get("/sessions/{session_id}", tags=["học vụ"])
-def session(session_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+def session(session_id: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return enrollment.session_roster(conn, me, session_id)
 
 
 @router.post("/sessions/{session_id}/attendance", tags=["học vụ"])
-def attendance(session_id: int, body: AttendanceIn, conn=Depends(db), me: Actor = Depends(actor)):
+def attendance(session_id: int, body: AttendanceIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return enrollment.mark_attendance(conn, me, session_id, [e.model_dump() for e in body.entries])
 
 
@@ -473,7 +476,7 @@ def list_students(
     q: str | None = None,
     limit: int = Limit,
     offset: int = Offset,
-    conn=Depends(db),
+    conn=Depends(db, scope="function"),
     me: Actor = Depends(actor),
 ):
     return paged(response, students.list_students(conn, me, q, limit, offset))
@@ -484,55 +487,59 @@ class StudentAccountIn(BaseModel):
 
 
 @router.get("/students/{student_id}/account", tags=["tài khoản"])
-def student_account(student_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+def student_account(student_id: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return {"account": accounts.student_account(conn, me, student_id)}
 
 
 @router.post("/students/{student_id}/account", tags=["tài khoản"], status_code=201)
-def create_student_account(student_id: int, body: StudentAccountIn, conn=Depends(db), me: Actor = Depends(actor)):
+def create_student_account(
+    student_id: int, body: StudentAccountIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)
+):
     return accounts.create_student_account(conn, me, student_id, body.gui_email)
 
 
 @router.get("/students/{student_id}", tags=["học vụ"])
-def get_student(student_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+def get_student(student_id: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return students.get_student(conn, me, student_id)
 
 
 @router.post("/enrollments/quote", tags=["học vụ"])
-def quote(body: EnrollIn, conn=Depends(db), me: Actor = Depends(actor)):
+def quote(body: EnrollIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     q = enrollment.quote(conn, me, body.hoc_vien_id, body.lop_hoc_id, body.tra_gop, body.uu_dai, body.voucher)
     return {k: v for k, v in q.items() if not k.startswith("_")}
 
 
 @router.post("/enrollments", tags=["học vụ"], status_code=201)
-def enroll(body: EnrollIn, conn=Depends(db), me: Actor = Depends(actor)):
+def enroll(body: EnrollIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return enrollment.enroll(
         conn, me, body.hoc_vien_id, body.lop_hoc_id, body.tra_gop, body.uu_dai, body.voucher, body.khach_id
     )
 
 
 @router.post("/enrollments/{enrollment_id}/transfer", tags=["học vụ"])
-def transfer(enrollment_id: int, body: TransferIn, conn=Depends(db), me: Actor = Depends(actor)):
+def transfer(enrollment_id: int, body: TransferIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return enrollment.transfer(conn, me, enrollment_id, body.lop_moi_id, body.ly_do)
 
 
 @router.post("/enrollments/{enrollment_id}/reserve", tags=["học vụ"])
-def reserve(enrollment_id: int, body: ReserveIn, conn=Depends(db), me: Actor = Depends(actor)):
+def reserve(enrollment_id: int, body: ReserveIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return enrollment.reserve(conn, me, enrollment_id, body.so_thang, body.ly_do, body.mien_phi)
 
 
 @router.post("/enrollments/{enrollment_id}/cancel", tags=["học vụ"])
-def cancel_enrollment(enrollment_id: int, body: ReasonIn, conn=Depends(db), me: Actor = Depends(actor)):
+def cancel_enrollment(
+    enrollment_id: int, body: ReasonIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)
+):
     return enrollment.cancel_enrollment(conn, me, enrollment_id, body.ly_do)
 
 
 @router.post("/enrollments/{enrollment_id}/complete", tags=["học vụ"])
-def complete(enrollment_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+def complete(enrollment_id: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return enrollment.complete(conn, me, enrollment_id)
 
 
 @router.post("/enrollments/{enrollment_id}/grades", tags=["học vụ"])
-def grade(enrollment_id: int, body: GradeIn, conn=Depends(db), me: Actor = Depends(actor)):
+def grade(enrollment_id: int, body: GradeIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return enrollment.set_grade(conn, me, enrollment_id, body.loai, body.diem, body.nhan_xet)
 
 
@@ -562,39 +569,39 @@ def invoices(
     qua_han: bool = False,
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Offset,
-    conn=Depends(db),
+    conn=Depends(db, scope="function"),
     me: Actor = Depends(actor),
 ):
     return paged(response, finance.list_invoices(conn, me, trang_thai, q, qua_han, limit, offset))
 
 
 @router.get("/invoices/summary", tags=["tài chính"])
-def invoice_summary(conn=Depends(db), me: Actor = Depends(actor)):
+def invoice_summary(conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return finance.debt_summary(conn, me)
 
 
 @router.get("/invoices/{invoice_id}", tags=["tài chính"])
-def invoice(invoice_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+def invoice(invoice_id: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return finance.get_invoice(conn, me, invoice_id)
 
 
 @router.post("/invoices/{invoice_id}/payments", tags=["tài chính"])
-def pay(invoice_id: int, body: PaymentIn, conn=Depends(db), me: Actor = Depends(actor)):
+def pay(invoice_id: int, body: PaymentIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return finance.record_payment(conn, me, invoice_id, body.so_tien, body.phuong_thuc, body.ghi_chu)
 
 
 @router.get("/refunds", tags=["tài chính"])
-def refunds(trang_thai: str | None = "cho_duyet", conn=Depends(db), me: Actor = Depends(actor)):
+def refunds(trang_thai: str | None = "cho_duyet", conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return finance.list_refunds(conn, me, trang_thai or None)
 
 
 @router.post("/refunds/{refund_id}/decide", tags=["tài chính"])
-def decide_refund(refund_id: int, body: DecideIn, conn=Depends(db), me: Actor = Depends(actor)):
+def decide_refund(refund_id: int, body: DecideIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return finance.decide_refund(conn, me, refund_id, body.duyet)
 
 
 @router.post("/vouchers", tags=["tài chính"], status_code=201)
-def voucher(body: VoucherIn, conn=Depends(db), me: Actor = Depends(actor)):
+def voucher(body: VoucherIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return finance.issue_voucher(conn, me, body.hoc_vien_id, body.phan_tram, body.ly_do, body.so_ngay)
 
 
@@ -614,12 +621,12 @@ class HandleIn(BaseModel):
 
 
 @router.get("/portal", tags=["cổng học viên"])
-def portal(conn=Depends(db), me: Actor = Depends(actor)):
+def portal(conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return students.portal_overview(conn, me)
 
 
 @router.post("/portal/requests", tags=["cổng học viên"], status_code=201)
-def submit_request(body: RequestIn, conn=Depends(db), me: Actor = Depends(actor)):
+def submit_request(body: RequestIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return students.submit_request(conn, me, body.loai, body.noi_dung, body.don_hang_id)
 
 
@@ -629,14 +636,14 @@ def requests(
     trang_thai: str | None = None,
     limit: int = Limit,
     offset: int = Offset,
-    conn=Depends(db),
+    conn=Depends(db, scope="function"),
     me: Actor = Depends(actor),
 ):
     return paged(response, students.list_requests(conn, me, trang_thai, limit, offset))
 
 
 @router.post("/requests/{request_id}/handle", tags=["cổng học viên"])
-def handle_request(request_id: int, body: HandleIn, conn=Depends(db), me: Actor = Depends(actor)):
+def handle_request(request_id: int, body: HandleIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     params = {"so_thang": body.so_thang or 3, "mien_phi": body.mien_phi, "lop_moi_id": body.lop_moi_id}
     return students.handle_request(conn, me, request_id, body.duyet, body.phan_hoi, params)
 
@@ -668,54 +675,54 @@ def list_proposals(
     agent: str | None = None,
     limit: int = Limit,
     offset: int = Offset,
-    conn=Depends(db),
+    conn=Depends(db, scope="function"),
     me: Actor = Depends(actor),
 ):
     return paged(response, proposals.list_proposals(conn, me, trang_thai or None, agent, limit, offset))
 
 
 @router.get("/proposals/counts", tags=["hộp duyệt"])
-def proposal_counts(conn=Depends(db), me: Actor = Depends(actor)):
+def proposal_counts(conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return proposals.counts(conn, me)
 
 
 @router.get("/proposals/{pid}", tags=["hộp duyệt"])
-def get_proposal(pid: int, conn=Depends(db), me: Actor = Depends(actor)):
+def get_proposal(pid: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return proposals.get(conn, me, pid)
 
 
 @router.post("/proposals/{pid}/approve", tags=["hộp duyệt"])
-def approve(pid: int, body: ApproveIn, conn=Depends(db), me: Actor = Depends(actor)):
+def approve(pid: int, body: ApproveIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return proposals.approve(conn, me, pid, body.edits)
 
 
 @router.post("/proposals/{pid}/reject", tags=["hộp duyệt"])
-def reject(pid: int, body: RejectIn, conn=Depends(db), me: Actor = Depends(actor)):
+def reject(pid: int, body: RejectIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return proposals.reject(conn, me, pid, body.ly_do)
 
 
 @router.post("/proposals/{pid}/dismiss", tags=["hộp duyệt"])
-def dismiss(pid: int, conn=Depends(db), me: Actor = Depends(actor)):
+def dismiss(pid: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return proposals.dismiss(conn, me, pid)
 
 
 @router.post("/proposals/bulk", tags=["hộp duyệt"])
-def bulk(body: BulkIn, conn=Depends(db), me: Actor = Depends(actor)):
+def bulk(body: BulkIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return proposals.bulk_decide(conn, me, body.ids, body.duyet, body.ly_do)
 
 
 @router.get("/autonomy", tags=["agent"])
-def policies(conn=Depends(db), me: Actor = Depends(actor)):
+def policies(conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return proposals.list_policies(conn, me)
 
 
 @router.put("/autonomy/{action_type}", tags=["agent"])
-def set_policy(action_type: str, body: PolicyIn, conn=Depends(db), me: Actor = Depends(actor)):
+def set_policy(action_type: str, body: PolicyIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return proposals.update_policy(conn, me, action_type, body.muc, body.han_muc_ngay)
 
 
 @router.get("/agents", tags=["agent"])
-def agents(conn=Depends(db), me: Actor = Depends(actor)):
+def agents(conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     from eduassist.background.agents import AGENTS
 
     require(me, "chat.data")
@@ -742,7 +749,7 @@ def agents(conn=Depends(db), me: Actor = Depends(actor)):
 
 
 @router.post("/agents/{name}/run", tags=["agent"], status_code=202)
-def run_now(name: str, conn=Depends(db), user: AuthUser = Depends(current_user)):
+def run_now(name: str, conn=Depends(db, scope="function"), user: AuthUser = Depends(current_user)):
     """Yêu cầu chạy ngay một agent (ngoài lịch). Worker nhận trong vài giây; theo dõi kết quả bằng
     GET /agents/requests/{yeu_cau_id}. Không chạy trong request API: agent có thể gọi LLM vài chục giây."""
     from eduassist.background.agents import AGENTS
@@ -755,7 +762,7 @@ def run_now(name: str, conn=Depends(db), user: AuthUser = Depends(current_user))
 
 
 @router.get("/agents/requests/{request_id}", tags=["agent"])
-def run_request(request_id: int, conn=Depends(db), me: Actor = Depends(actor)):
+def run_request(request_id: int, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     from eduassist.background.runner import run_request_status
 
     require(me, "agent.run")
@@ -767,7 +774,10 @@ def run_request(request_id: int, conn=Depends(db), me: Actor = Depends(actor)):
 
 @router.get("/agents/runs", tags=["agent"])
 def runs(
-    agent: str | None = None, limit: int = Query(default=50, le=200), conn=Depends(db), me: Actor = Depends(actor)
+    agent: str | None = None,
+    limit: int = Query(default=50, le=200),
+    conn=Depends(db, scope="function"),
+    me: Actor = Depends(actor),
 ):
     require(me, "chat.data")
     return conn.execute(
@@ -777,7 +787,9 @@ def runs(
 
 
 @router.get("/agents/stats", tags=["agent"])
-def agent_stats(days: int = Query(default=30, ge=1, le=365), conn=Depends(db), me: Actor = Depends(actor)):
+def agent_stats(
+    days: int = Query(default=30, ge=1, le=365), conn=Depends(db, scope="function"), me: Actor = Depends(actor)
+):
     return proposals.stats(conn, me, days)
 
 
@@ -789,7 +801,7 @@ def audit_log(
     chi_agent: bool = False,
     limit: int = Limit,
     offset: int = Offset,
-    conn=Depends(db),
+    conn=Depends(db, scope="function"),
     me: Actor = Depends(actor),
 ):
     require(me, "audit.read")
@@ -834,24 +846,26 @@ def list_users(
     role: str | None = None,
     limit: int = Limit,
     offset: int = Offset,
-    conn=Depends(db),
+    conn=Depends(db, scope="function"),
     me: Actor = Depends(actor),
 ):
     return paged(response, accounts.list_users(conn, me, q, role, limit, offset))
 
 
 @router.post("/users", tags=["quản trị"], status_code=201)
-def create_user(body: UserIn, conn=Depends(db), me: Actor = Depends(actor)):
+def create_user(body: UserIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return accounts.create_staff_user(
         conn, me, body.username, body.display_name, body.role, body.email, body.giang_vien_id, body.gui_email
     )
 
 
 @router.patch("/users/{username}", tags=["quản trị"])
-def update_user(username: str, body: UserPatch, conn=Depends(db), me: Actor = Depends(actor)):
+def update_user(username: str, body: UserPatch, conn=Depends(db, scope="function"), me: Actor = Depends(actor)):
     return accounts.update_user(conn, me, username, body.display_name, body.role, body.email, body.active)
 
 
 @router.post("/users/{username}/reset-password", tags=["quản trị"])
-def admin_reset_password(username: str, body: ResetPwIn, conn=Depends(db), me: Actor = Depends(actor)):
+def admin_reset_password(
+    username: str, body: ResetPwIn, conn=Depends(db, scope="function"), me: Actor = Depends(actor)
+):
     return accounts.admin_reset_password(conn, me, username, body.gui_email)

@@ -1,0 +1,103 @@
+# Mặc định CHẶN mọi kết nối đi vào pod trong namespace, rồi mở đúng từng đường cần thiết.
+# (Cần Cilium: cluster tạo với --network-dataplane cilium.) Chiều đi ra (Groq, Gmail, Azure Blob) không chặn.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# Internet -> Caddy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: caddy-from-internet
+spec:
+  podSelector:
+    matchLabels: {app: caddy}
+  ingress:
+    - ports:
+        - {port: 80}
+        - {port: 443}
+        - {port: 8080}
+---
+# Caddy -> web
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-from-caddy
+spec:
+  podSelector:
+    matchLabels: {app: web}
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: caddy}}
+      ports:
+        - {port: 3000}
+---
+# Caddy, web (trang công khai render phía server) -> api
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-from-caddy-web
+spec:
+  podSelector:
+    matchLabels: {app: api}
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: caddy}}
+        - podSelector: {matchLabels: {app: web}}
+      ports:
+        - {port: 8000}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-chat-from-caddy
+spec:
+  podSelector:
+    matchLabels: {app: api-chat}
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: caddy}}
+      ports:
+        - {port: 8000}
+---
+# Ứng dụng (api, api-chat, worker, Job setup) -> redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-from-app
+spec:
+  podSelector:
+    matchLabels: {app: redis}
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {tier: app}}
+      ports:
+        - {port: 6379}
+---
+# Ứng dụng -> Postgres; hai bản Postgres nối nhau (sao chép); operator CloudNativePG hỏi trạng thái từng bản
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+spec:
+  podSelector:
+    matchLabels: {cnpg.io/cluster: eduassist-db}
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {tier: app}}
+      ports:
+        - {port: 5432}
+    - from:
+        - podSelector: {matchLabels: {cnpg.io/cluster: eduassist-db}}
+      ports:
+        - {port: 5432}
+        - {port: 8000}
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: cnpg-system}}
+      ports:
+        - {port: 8000}
+        - {port: 5432}

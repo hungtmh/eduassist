@@ -42,7 +42,7 @@ def change_password(
     body: ChangePasswordIn,
     request: Request,
     user: AuthUser = Depends(current_user_any),
-    conn=Depends(db),
+    conn=Depends(db, scope="function"),
     limiter: RateLimiter = Depends(get_login_limiter),
 ):
     """Đổi mật khẩu. Mọi phiên khác bị đăng xuất; trả token mới cho phiên hiện tại."""
@@ -53,7 +53,10 @@ def change_password(
 
 @router.post("/auth/forgot-password")
 def forgot_password(
-    body: ForgotIn, request: Request, conn=Depends(db), limiter: RateLimiter = Depends(get_login_limiter)
+    body: ForgotIn,
+    request: Request,
+    conn=Depends(db, scope="function"),
+    limiter: RateLimiter = Depends(get_login_limiter),
 ):
     limiter.check(f"forgot:{client_ip(request)}")
     accounts.request_password_reset(conn, body.ten_dang_nhap_hoac_email)
@@ -65,14 +68,19 @@ def forgot_password(
 
 
 @router.get("/auth/reset-token")
-def check_reset_token(token: str, request: Request, conn=Depends(db), limiter=Depends(get_login_limiter)):
+def check_reset_token(
+    token: str, request: Request, conn=Depends(db, scope="function"), limiter=Depends(get_login_limiter)
+):
     limiter.check(f"reset:{client_ip(request)}")
     return accounts.check_link(conn, token)
 
 
 @router.post("/auth/reset-password")
 def reset_password(
-    body: ResetIn, request: Request, conn=Depends(db), limiter: RateLimiter = Depends(get_login_limiter)
+    body: ResetIn,
+    request: Request,
+    conn=Depends(db, scope="function"),
+    limiter: RateLimiter = Depends(get_login_limiter),
 ):
     limiter.check(f"reset:{client_ip(request)}")
     accounts.reset_password(conn, body.token, body.mat_khau_moi)
@@ -80,7 +88,7 @@ def reset_password(
 
 
 @router.post("/auth/logout-all")
-def logout_all(user: AuthUser = Depends(current_user_any), conn=Depends(db)):
+def logout_all(user: AuthUser = Depends(current_user_any), conn=Depends(db, scope="function")):
     """Đăng xuất khỏi mọi thiết bị (token đang dùng cũng hết hiệu lực)."""
     accounts.logout_everywhere(conn, user.username)
     return {"ok": True}

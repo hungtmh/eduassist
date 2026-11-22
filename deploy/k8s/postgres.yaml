@@ -1,0 +1,84 @@
+# Postgres do CloudNativePG vận hành: 1 bản chính + 1 bản sao, tự chuyển khi bản chính chết.
+# Service do operator tạo: eduassist-db-rw (luôn trỏ bản chính, để ghi), eduassist-db-ro (bản sao, để đọc).
+# Sao lưu: WAL liên tục + bản đầy đủ định kỳ lên Azure Blob qua plugin Barman Cloud (ObjectStore tạo bởi
+# scripts/deploy.sh vì cần tên Storage Account).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: eduassist-db
+spec:
+  instances: 2
+  # Ảnh "standard" của CloudNativePG có sẵn pgvector
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.16-standard-trixie
+  primaryUpdateStrategy: unsupervised
+  postgresql:
+    parameters:
+      shared_buffers: 256MB
+      effective_cache_size: 768MB
+      work_mem: 8MB
+      maintenance_work_mem: 128MB
+      max_connections: "200"
+      timezone: Asia/Ho_Chi_Minh
+      log_timezone: Asia/Ho_Chi_Minh
+      log_min_duration_statement: "500"
+      log_lock_waits: "on"
+      wal_compression: "on"
+      pg_stat_statements.max: "5000"
+    # Đồng bộ: COMMIT chỉ báo thành công khi bản sao đã nhận (không mất giao dịch thanh toán khi bản chính chết).
+    # "preferred": bản sao hỏng thì vẫn cho ghi thay vì treo toàn hệ thống.
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
+  bootstrap:
+    initdb:
+      database: eduassist
+      owner: app_rw
+      secret:
+        name: eduassist-db-app
+      # Chạy bằng quyền superuser ngay khi tạo database: app_rw không phải superuser nên không tự tạo được
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector
+        - CREATE EXTENSION IF NOT EXISTS pg_stat_statements
+  managed:
+    roles:
+      # eduassist-setup tạo role chỉ đọc agent_ro cho Text-to-SQL, nên app_rw cần CREATEROLE
+      - name: app_rw
+        ensure: present
+        login: true
+        createrole: true
+        passwordSecret:
+          name: eduassist-db-app
+  storage:
+    size: 16Gi
+    storageClass: managed-csi
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: preferred
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: eduassist-backup
+---
+# Cluster chỉ bật vài giờ mỗi lần, nên sao lưu đầy đủ ngay khi tạo rồi mỗi 6 giờ (WAL thì đẩy liên tục).
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: eduassist-db-backup
+spec:
+  schedule: "0 0 */6 * * *"
+  immediate: true
+  backupOwnerReference: self
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  cluster:
+    name: eduassist-db

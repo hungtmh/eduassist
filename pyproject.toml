@@ -32,6 +32,7 @@ eduassist-setup = "eduassist.scripts.setup:main"
 eduassist-chat = "eduassist.cli:main"
 eduassist-eval = "eduassist.evals.run:main"
 eduassist-worker = "eduassist.background.runner:main"
+eduassist-worker-alive = "eduassist.background.runner:heartbeat_ok"
 
 [tool.ruff]
 line-length = 120

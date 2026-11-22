@@ -106,7 +106,9 @@ class LeadIn(BaseModel):
 
 
 @router.post("/leads", status_code=201)
-def submit_lead(body: LeadIn, request: Request, conn=Depends(db), limiters: dict = Depends(get_public_limiters)):
+def submit_lead(
+    body: LeadIn, request: Request, conn=Depends(db, scope="function"), limiters: dict = Depends(get_public_limiters)
+):
     limiters["lead"].check(f"lead:{client_ip(request)}")
     if body.website:  # bot điền cả ô ẩn: trả "thành công" để bot không thử cách khác, nhưng không lưu gì
         return {"ok": True}

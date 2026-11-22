@@ -1,0 +1,64 @@
+{
+	# Load Balancer của Azure chỉ mở TCP 80/443: tắt HTTP/3 (UDP) để trình duyệt không thử một cổng không có
+	servers {
+		protocols h1 h2
+	}
+}
+
+# Kiểm tra sức khoẻ cho K8s (không mở ra ngoài: Service chỉ có cổng 80/443)
+:8080 {
+	respond /healthz 200
+}
+
+# Hai bản Caddy dùng chung thư mục /data (Azure Files) nên dùng chung chứng chỉ, chỉ một bản xin với Let's Encrypt.
+# Chia tải tới các pod api / web do Service của K8s làm; Caddy chỉ định tuyến theo đường dẫn.
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# /api/xyz -> API nhận /xyz
+	handle_path /api/* {
+		@internal path /metrics
+		respond @internal 404
+
+		# Chat SSE: đẩy từng mẩu ngay, không gom đệm
+		@chat path /chat /chat/resume /public/chat
+		handle @chat {
+			reverse_proxy api-chat:8000 {
+				lb_try_duration 3s
+				flush_interval -1
+				transport http {
+					read_timeout 2m
+				}
+			}
+		}
+
+		handle {
+			reverse_proxy api:8000 {
+				lb_try_duration 3s
+				transport http {
+					read_timeout 1m
+				}
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy web:3000 {
+			lb_try_duration 3s
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

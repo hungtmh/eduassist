@@ -1,0 +1,64 @@
+# Agent chạy nền + outbox. Chạy 2 bản an toàn (outbox SKIP LOCKED, agent theo lịch có khoá), bản này chết thì bản
+# kia làm tiếp. Không có HTTP: liveness probe đọc file nhịp tim (eduassist-worker-alive), vòng lặp treo thì K8s
+# khởi động lại.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels: {app: worker, tier: app}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: {app: worker}
+  template:
+    metadata:
+      labels: {app: worker, tier: app}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app: worker}
+      containers:
+        - name: worker
+          image: eduassist-api
+          command: ["eduassist-worker"]
+          envFrom:
+            - configMapRef: {name: eduassist-config}
+            - secretRef: {name: eduassist-secrets}
+          resources:
+            requests: {cpu: 50m, memory: 160Mi}
+            limits: {memory: 768Mi}
+          livenessProbe:
+            exec: {command: ["eduassist-worker-alive"]}
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            timeoutSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: worker
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: worker}

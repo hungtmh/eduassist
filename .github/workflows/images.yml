@@ -1,0 +1,70 @@
+# Build image cho Kubernetes và đẩy lên GitHub Container Registry (ghcr.io). Xem deploy/k8s/README.md.
+#
+#   eduassist-api: dùng chung cho api, api-chat, worker, Job setup (khác nhau ở lệnh chạy trong manifest)
+#   eduassist-web: Next.js. Địa chỉ API được gắn cứng vào bản build, nên phải build lại khi đổi tên miền.
+#
+# Tag = 7 ký tự đầu của commit: mỗi bản build một tag riêng, không ghi đè, quay lại bản cũ chỉ cần đổi tag.
+# Trivy quét lỗ hổng trước khi đẩy: còn lỗ hổng CRITICAL đã có bản vá thì dừng, không đẩy.
+name: Images
+
+on:
+  push:
+    branches: [main]
+    paths: ["src/**", "web/**", "sql/**", "migrations/**", "data/**", "Dockerfile", "pyproject.toml", "uv.lock"]
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: Tên miền công khai (không có https://)
+        default: eduassist-hcmus.malaysiawest.cloudapp.azure.com
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  DOMAIN: ${{ inputs.domain || 'eduassist-hcmus.malaysiawest.cloudapp.azure.com' }}
+  TRIVY_IMAGE: aquasec/trivy:0.76.2
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: eduassist-api
+            context: .
+          - name: eduassist-web
+            context: ./web
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag
+        id: tag
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${{ matrix.name }}" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          load: true
+          tags: ${{ steps.tag.outputs.image }}:${{ steps.tag.outputs.sha }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=https://${{ env.DOMAIN }}/api
+            NEXT_PUBLIC_SITE_URL=https://${{ env.DOMAIN }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: Trivy (lỗ hổng CRITICAL đã có bản vá thì dừng)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image \
+            --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
+            "${{ steps.tag.outputs.image }}:${{ steps.tag.outputs.sha }}"
+      - name: Push
+        run: docker push "${{ steps.tag.outputs.image }}:${{ steps.tag.outputs.sha }}"
+      - name: Ghi tag
+        run: echo "### ${{ matrix.name }}:${{ steps.tag.outputs.sha }} (tên miền ${{ env.DOMAIN }})" >> "$GITHUB_STEP_SUMMARY"

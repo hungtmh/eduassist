@@ -18,3 +18,7 @@ wheels/
 # Production
 .env.production
 backups/
+
+# Kubernetes: bí mật do bạn điền và mật khẩu script tự sinh
+deploy/k8s/secrets.env
+deploy/k8s/.state/

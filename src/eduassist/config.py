@@ -132,6 +132,10 @@ class Settings(BaseSettings):
     background_llm: bool = True  # False: chỉ dùng bản mẫu do code soạn (mô phỏng, đánh giá, khi hết hạn mức LLM)
     background_llm_timeout_seconds: float = 15  # một lần soạn lời văn; quá thì dùng bản mẫu
     worker_poll_seconds: int = 5
+    # Nhịp tim của worker (eduassist-worker-alive, liveness probe trên K8s). Trống = thư mục tạm của hệ điều hành.
+    worker_heartbeat_file: str = ""
+    # Một vòng được phép chạy lâu chừng này (agent theo lịch có gọi LLM) trước khi bị coi là treo
+    worker_heartbeat_grace_seconds: int = 600
     daily_run_hour: int = 7  # sau giờ này mỗi ngày, worker chạy các agent đến lịch
 
     @property
