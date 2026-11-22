@@ -108,10 +108,17 @@ fi
 run_setup() {  # $1 = DEMO_MODE
   local name="setup-$TAG-$1-$(date +%H%M%S)"
   sed -e "s/__NAME__/$name/" -e "s/__TAG__/$TAG/" -e "s/__DEMO_MODE__/$1/" jobs/setup.yaml | kubectl apply -f - >/dev/null
-  if ! kubectl -n "$NS" wait "job/$name" --for=condition=complete --timeout=30m; then
-    kubectl -n "$NS" logs "job/$name" --tail=80 || true
-    echo "Job setup lỗi: DỪNG, phiên bản đang chạy giữ nguyên"; exit 1
+  local state=""
+  for _ in $(seq 1 360); do  # tối đa 30 phút; dừng NGAY khi Job báo Failed (wait --for=complete thì chờ hết giờ)
+    state=$(kubectl -n "$NS" get "job/$name" -o jsonpath='{.status.conditions[?(@.status=="True")].type}')
+    case "$state" in *Complete*|*Failed*) break ;; esac
+    sleep 5
+  done
+  if [[ "$state" != *Complete* ]]; then
+    kubectl -n "$NS" logs "job/$name" --tail=40 | grep -v onnxruntime || true
+    echo "Job setup lỗi ($state): DỪNG, phiên bản đang chạy giữ nguyên"; exit 1
   fi
+  echo "job/$name xong"
   kubectl -n "$NS" logs "job/$name" | grep -E "mật khẩu tạm|khoá tài khoản demo|ERROR" || true
 }
 if $SEED; then

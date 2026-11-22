@@ -36,19 +36,14 @@ spec:
       owner: app_rw
       secret:
         name: eduassist-db-app
-      # Chạy bằng quyền superuser ngay khi tạo database: app_rw không phải superuser nên không tự tạo được
+      # Chạy bằng quyền superuser ngay khi tạo database: app_rw không phải superuser nên không tự làm được.
+      # CREATEROLE: eduassist-setup tạo role chỉ đọc agent_ro cho Text-to-SQL. KHÔNG khai báo app_rw trong
+      # managed.roles: operator sẽ đồng bộ lại quan hệ thành viên của app_rw và thu hồi quyền ADMIN trên agent_ro
+      # (Postgres 16 cần quyền đó để đổi mật khẩu / cấu hình agent_ro), làm Job setup lần sau lỗi.
       postInitApplicationSQL:
         - CREATE EXTENSION IF NOT EXISTS vector
         - CREATE EXTENSION IF NOT EXISTS pg_stat_statements
-  managed:
-    roles:
-      # eduassist-setup tạo role chỉ đọc agent_ro cho Text-to-SQL, nên app_rw cần CREATEROLE
-      - name: app_rw
-        ensure: present
-        login: true
-        createrole: true
-        passwordSecret:
-          name: eduassist-db-app
+        - ALTER ROLE app_rw CREATEROLE
   storage:
     size: 16Gi
     storageClass: managed-csi

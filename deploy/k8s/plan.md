@@ -4,6 +4,34 @@
 > ngày hôm đó (giá lấy từ Azure Retail Prices API, chưa gồm thuế). Riêng giá Load Balancer là ước tính, phải kiểm tra
 > lại trong Cost Management sau buổi chạy đầu tiên.
 
+## Trạng thái (22/11/2026): ĐÃ GO-LIVE
+
+**https://eduassist-hcmus.malaysiawest.cloudapp.azure.com** chạy trên AKS, image `c8b2c54`. Vận hành: [README.md](README.md).
+
+Đã kiểm tra trên bản thật:
+
+| Hạng mục | Kết quả |
+|---|---|
+| HTTPS | Chứng chỉ Let's Encrypt (YE2), hạn 20/02/2027, Caddy tự gia hạn; http → https (308); HSTS, X-Frame-Options |
+| Cập nhật không gián đoạn | Deploy `f163f6f` → `c8b2c54` trong lúc gọi API liên tục: **96/96 request 200** |
+| Sao lưu | Bản đầy đủ + WAL liên tục lên Azure Blob; tự sao lưu trước migration (`pre-deploy-…`) |
+| Postgres | 2/2 bản, bản sao đồng bộ (`quorum`), 2 node khác nhau |
+| NetworkPolicy | web → Postgres / Redis bị chặn; api → Postgres được phép |
+| IP thật | Log API ghi IP của người dùng, không phải IP node |
+| Ứng dụng | Đăng nhập quản trị; tài khoản demo bị khoá; Gmail SMTP đăng nhập được; chat AI trả chữ đầu sau 1,9 giây |
+| Ngân sách | Budget `eduassist-100usd`, email ở mốc 10 / 30 / 50 / 80 đô |
+
+Lỗi tìm ra khi go-live và đã sửa (có test): tài khoản quản trị đầu tiên không được tạo khi dữ liệu mẫu có quản lý
+demo bị khoá; Caddy để lọt `/api/metrics` tới API; operator CloudNativePG thu hồi quyền ADMIN của `app_rw` trên
+`agent_ro` (bỏ `managed.roles`); `deploy.sh` chờ hết 30 phút khi Job setup đã lỗi.
+
+Khác với kế hoạch ban đầu bên dưới:
+- Bỏ Giai đoạn 2 (Docker Desktop) và hai overlay `lab`/`prod`: dựng thẳng một cấu hình production trên AKS, **bật/tắt
+  theo yêu cầu** (`scripts/cluster.ps1`) thay vì dựng–xoá mỗi buổi, để giữ dữ liệu và chứng chỉ.
+- Không rải node qua vùng con (quota 3 node); không Key Vault (Secret của K8s); không Prometheus/Grafana (RAM node
+  4 GB); deploy chạy từ máy bằng `scripts/deploy.sh`, chưa có workflow deploy qua OIDC.
+- Bài lab mục 7 (Giai đoạn 4) để bạn tự làm trên cluster này.
+
 ## 0. Tóm tắt
 
 - **Mục tiêu:** chạy EduAssist trên AKS với đầy đủ các thực hành mà hệ thống production thật cần: nhiều node, nhiều
