@@ -5,6 +5,7 @@ DATA_RG=${DATA_RG:-eduassist-data}
 CLUSTER=${CLUSTER:-eduassist}
 VM=${VM:-Standard_B2als_v2}
 NS=eduassist
+export PYTHONIOENCODING=utf-8 PYTHONUTF8=1
 
 # Git Bash trên Windows: Azure CLI cài bằng winget có thể chưa nằm trong PATH của phiên này
 if ! command -v az >/dev/null 2>&1; then

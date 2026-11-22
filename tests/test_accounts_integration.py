@@ -50,6 +50,23 @@ def _new_staff(conn, username="nv.test", role="consultant", email="nv.test@anhdu
     return accounts.create_staff_user(conn, MANAGER, username, "Nhân viên Test", role, email)
 
 
+# ---------------------------------------------------------------- quản lý đầu tiên khi lên production
+def test_bootstrap_manager_when_only_locked_managers_remain(conn):
+    # Dữ liệu mẫu rồi khoá tài khoản demo (cách lên production có sẵn dữ liệu): vẫn phải tạo được quản trị
+    conn.execute("UPDATE app_user SET active = false WHERE role = 'manager'")
+    temp = accounts.bootstrap_manager(conn, "quantri.test", "Quản trị", None, None)
+    assert temp
+    assert accounts.login(conn, "quantri.test", temp)
+    # Đã có quản lý đang hoạt động thì không tạo thêm
+    assert accounts.bootstrap_manager(conn, "quantri.khac", "Khác", None, None) is None
+
+
+def test_bootstrap_manager_refuses_taken_username(conn):
+    conn.execute("UPDATE app_user SET active = false WHERE role = 'manager'")
+    with pytest.raises(RuleViolation):
+        accounts.bootstrap_manager(conn, "tuvan", "Trùng tên", None, None)
+
+
 # ---------------------------------------------------------------- đăng nhập & khoá tạm
 def test_login_locks_after_repeated_failures(conn):
     temp = _new_staff(conn)["mat_khau_tam"]

@@ -475,9 +475,14 @@ def create_student_account(conn, actor: Actor, hoc_vien_id: int, send_email: boo
 
 # ---------------------------------------------------------------- tài khoản quản lý đầu tiên (production)
 def bootstrap_manager(conn, username: str, display_name: str, email: str | None, password: str | None) -> str | None:
-    """Tạo tài khoản quản lý đầu tiên nếu hệ thống chưa có quản lý nào. Trả mật khẩu tạm nếu tự sinh."""
-    if conn.execute("SELECT 1 FROM app_user WHERE role = 'manager'").fetchone():
+    """Tạo tài khoản quản lý đầu tiên nếu hệ thống chưa có quản lý nào ĐANG HOẠT ĐỘNG. Trả mật khẩu tạm nếu tự sinh.
+
+    Chỉ tính tài khoản active: dữ liệu mẫu có quản lý demo bị khoá khi lên production (disable_demo_accounts), nếu
+    đếm cả tài khoản đó thì hệ thống không còn ai đăng nhập quản trị được."""
+    if conn.execute("SELECT 1 FROM app_user WHERE role = 'manager' AND active").fetchone():
         return None
+    if conn.execute("SELECT 1 FROM app_user WHERE username = %s", (username.strip().lower(),)).fetchone():
+        raise RuleViolation(f"Tên '{username}' đã có nhưng không phải quản lý đang hoạt động; đặt ADMIN_USERNAME khác.")
     username = username.strip().lower()
     if not USERNAME_RE.match(username):
         raise RuleViolation("ADMIN_USERNAME không hợp lệ.")

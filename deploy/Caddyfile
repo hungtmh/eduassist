@@ -32,8 +32,11 @@
 	# /api/xyz -> API nhận /xyz
 	handle_path /api/* {
 		# Số liệu vận hành chỉ cho mạng nội bộ (Prometheus hỏi thẳng api:8000/metrics)
+		# handle (không phải respond trần): các khối handle được xét TRƯỚC respond, nên respond trần bị bỏ qua
 		@internal path /metrics
-		respond @internal 404
+		handle @internal {
+			respond 404
+		}
 
 		# Chat: dịch vụ riêng, trả lời dạng SSE -> đẩy từng mẩu ngay, không gom đệm.
 		# Mỗi câu tối đa 45 giây (CHAT_TURN_TIMEOUT_SECONDS), read_timeout để dư.
